@@ -56,3 +56,59 @@ function base64URLStringToBuffer(base64URLString) {
 
   return buffer;
 }
+
+/**
+ * Generate random bytes
+ *
+ * @param {number} length The number of bytes to return
+ * @returns {Uint8Array}
+ */
+function getRandomBytes(length = 16) {
+  const arrayBuffer = new Uint8Array(new Array(length));
+  return crypto.getRandomValues(arrayBuffer);
+}
+
+const elemDebugContainer = document.querySelector('#debug');
+const elemDebugConsole = document.querySelector('#debug p');
+const elemOutput = document.querySelector('#output p');
+
+/**
+ * Output a message to the on-page console
+ *
+ * @param {string} text
+ */
+function writeToDebug(text) {
+  elemDebugConsole.innerHTML = elemDebugConsole.innerHTML + `<br>\[${Date.now()}\] ${text}`;
+}
+
+/**
+ * Display text that outputs from a protect or read operation
+ *
+ * @param {string} text
+ */
+function writeToOutput(text) {
+  elemOutput.innerText = text;
+}
+
+/**
+ * Write the error message to the debug console and output
+ * and throw the error
+ *
+ * @param {string} msg
+ */
+function throwErrorMessage(msg) {
+  writeToDebug(msg);
+  writeToOutput(`Error: ${msg}`);
+  throw new Error(msg);
+}
+
+/**
+ * Show or hide the debug console, opposite of its current visibility
+ */
+function toggleDebugConsoleVisibility() {
+  if (elemDebugContainer.classList.contains('hide')) {
+    elemDebugContainer.classList.remove('hide');
+  } else {
+    elemDebugContainer.classList.add('hide');
+  }
+}
