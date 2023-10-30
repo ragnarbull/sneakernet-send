@@ -13,7 +13,7 @@ async function registerWebAuthnAuthenticator({ userID, userName, prfSalt }) {
     const regCredential = await navigator.credentials.create({
       publicKey: {
         challenge: getRandomBytes(),
-        rp: { name: 'Project Skynet' },
+        rp: { name: 'One Key To Rule Them All' },
         user: {
           id: userID,
           name: userName,
@@ -43,6 +43,8 @@ async function registerWebAuthnAuthenticator({ userID, userName, prfSalt }) {
       alert(message);
       throw Error(message);
     }
+
+    console.log("PRF extension is compatible with this authenticator/client combo");
 
     const credentialID = base64URLStringToBuffer(regCredential.id);
 
