@@ -1,10 +1,56 @@
 const elemMessage = document.getElementById('message');
 const dialogFirstTime = document.getElementById('dialogFirstTime');
 
-const secureModule = (function () {
-  let masterKeyJWK;
-  let masterECDHKeypairJWKs;
+const userProperties = (function () {
+  /**
+   * Generate the user properties needed for the WebAuthn registration
+   *
+   */ 
+  function createUserProperties() {
+    try {
+      console.log("Setting up user properties...");
+      if (!encryptedEnvelope) throw new Error("The encrypted envelope has not been properly configured.");
+      if (!encryptedEnvelope.userProperties) encryptedEnvelope.userProperties = {};
+      
+      if (Object.keys(encryptedEnvelope.userProperties).length === 0) {
+        const userID = getRandomBytes();
+        const userName = `britneyspears${Date.now()}`; // ensure uniqueness
+        const updateData = { userName, userID };
+        Object.assign(encryptedEnvelope.userProperties, updateData);
+      } else throw new Error("The userProperties have not been properly configured.");
+    } catch (err) {
+      console.error(err.stack);
+      writeToDebug(err.stack);
+      writeToOutput(`Error: ${err}`);
+    }
+  }
 
+  /**
+   * Get the user properties from the encrypted envelope
+   *
+   * @returns {<{userID: Uint8Array, userName: string}>} - returns the userID as a Uint8Array and the userName as a string
+   */
+  function getUserProperties() {
+    try {
+      if (encryptedEnvelope && (Object.keys(encryptedEnvelope.userProperties).length !== 0)) {
+        const userID = encryptedEnvelope.userProperties.userID;
+        const userName = encryptedEnvelope.userProperties.userName;
+        return { userID, userName };
+      } else throw new Error("THe user properties have not been properly configured.");
+    } catch (err) {
+      console.error(err.stack);
+      writeToDebug(err.stack);
+      writeToOutput(`Error: ${err}`);
+    }
+  }
+
+  return {
+    createUserProperties,
+    getUserProperties
+  };
+})();
+
+const secureModule = (function () {
   /**
    * Create the master symmetric encryption key from random bytes
    *
@@ -21,6 +67,23 @@ const secureModule = (function () {
         ['encrypt', 'decrypt']
       );
       const masterKeyJWK = await crypto.subtle.exportKey('jwk', masterKey);
+
+      if (
+        !masterKeyJWK ||
+        typeof masterKeyJWK !== 'object' ||
+        masterKeyJWK.alg !== 'A256GCM' ||
+        masterKeyJWK.k?.length !== 43 ||
+        masterKeyJWK.kty !== 'oct'
+      ) {
+        throw new Error('The master key is not a valid JWK');
+      }
+
+      if (
+        !masterKeyJWK.key_ops.includes("encrypt") ||
+        !masterKeyJWK.key_ops.includes("decrypt")
+      ) {
+        throw new Error('The master key JWK does not have the correct key usages (encrypt and decrypt)');
+      }
       return masterKeyJWK;
     } catch (err) {
       console.error(err.stack);
@@ -32,49 +95,41 @@ const secureModule = (function () {
   /**
    * Generate the master ECDH key pair
    *
-   * @returns {Promise<{ publicKey: JsonWebKey, privateKey: JsonWebKey }>} - a Promise that returns an object containing the master ECDH key pair as JWKs
+   * @returns {Promise<{ masterECDHPublicKeyJWK: JsonWebKey, masterECDHPrivateKeyJWK: JsonWebKey }>} - a Promise that returns an object containing the master ECDH key pair as JWKs
    */
   async function generateMasterECDHKeyPairJWKs() {
     try {
       const algorithm = { name: 'ECDH', namedCurve: 'P-256' };
       const keyPair = await crypto.subtle.generateKey(algorithm, true, ['deriveKey']);
-      const publicKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
-      const privateKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
-      return { publicKey: publicKeyJWK, privateKey: privateKeyJWK };
-    } catch (err) {
-      console.error(err.stack);
-      writeToDebug(err.stack);
-      writeToOutput(`Error: ${err}`);
-    }
-  }
-
-  /**
-   * Generate the master keys (master syymetric encryption key and master asymmetric keys)
-   *
-   * @returns {Promise<{masterKey: JsonWebKey, masterKey: JsonWebKey}>} - a Promise that returns the master key and master ECDH keypair as JWKs
-   */
-  async function generateMasterKeys() {
-    try {
-
-      masterKeyJWK = await generateMasterKey();
-      masterECDHKeypairJWKs = await generateMasterECDHKeyPairJWKs();
-      console.log("Generated new master keys...");
-
-      if (encryptedEnvelope && Object.keys(encryptedEnvelope).length && encryptedEnvelope.prfHandles && encryptedEnvelope.prfHandles.length) {
-        // exisitng PRF handles (don't wipe them)!!!
-        const updateData = {
-          masterECDHPublicKeyJWK: masterECDHKeypairJWKs.publicKey,
-        };
-        Object.assign(encryptedEnvelope, updateData);
-      } else {
-        // first authenticator so no PRF handles
-        console.log("Ready to register the first authenticator...");
-        const updateData = {
-          masterECDHPublicKeyJWK: masterECDHKeypairJWKs.publicKey,
-          prfHandles: []
-        };
-        Object.assign(encryptedEnvelope, updateData);
+      const masterECDHPublicKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+      const masterECDHPrivateKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+      
+      if (
+        typeof masterECDHPublicKeyJWK !== 'object' ||
+        typeof masterECDHPublicKeyJWK !== 'object' ||
+        masterECDHPublicKeyJWK.kty !== 'EC' ||
+        masterECDHPublicKeyJWK.crv !== "P-256" ||
+        masterECDHPublicKeyJWK.x?.length !== 43 ||
+        masterECDHPublicKeyJWK.y?.length !== 43 ||
+        masterECDHPublicKeyJWK.key_ops?.length !== 0
+      ) {
+        throw new Error('The master ECDH public key is not a valid JWK');
       }
+
+      if (
+        !masterECDHPrivateKeyJWK ||
+        typeof masterECDHPrivateKeyJWK !== 'object' ||
+        masterECDHPrivateKeyJWK.kty !== 'EC' ||
+        masterECDHPrivateKeyJWK.crv !== "P-256" ||
+        masterECDHPrivateKeyJWK.x?.length !== 43 ||
+        masterECDHPrivateKeyJWK.y?.length !== 43 ||
+        masterECDHPrivateKeyJWK.d?.length !== 43 || 
+        !masterECDHPrivateKeyJWK.key_ops?.includes("deriveKey")
+      ) {
+        throw new Error('The master ECDH private key is not a valid JWK');
+      }
+
+      return { masterECDHPublicKeyJWK, masterECDHPrivateKeyJWK };
     } catch (err) {
       console.error(err.stack);
       writeToDebug(err.stack);
@@ -82,93 +137,22 @@ const secureModule = (function () {
     }
   }
 
-  /**
-   * Function that returns the master key as a JWK
-   *
-   * @returns {JsonWebKey} - the master key as a JWK
-   */
-  function getMasterKey() {
-    return masterKeyJWK;
-  }
-
-  /**
-   * Function that returns the master ECDH private key as a JWK
-   *
-   * @returns {JsonWebKey} - the master ECDH private key as a JWK
-   */
-  function getMasterECDHPrivateKey() {
-    const masterECDHPrivateKeyJWK = masterECDHKeypairJWKs.privateKey;
-    return masterECDHPrivateKeyJWK;
-  }
-
   return {
-    generateMasterKeys,
-    getMasterKey,
-    getMasterECDHPrivateKey
+    generateMasterKey,
+    generateMasterECDHKeyPairJWKs,
   };
 })();
 
-const userProperties = (function () {
-  /**
-   * Generate a random userID and save it to local storage
-   *
-   */
-  function createUserID() {
-    localStorage.setItem('userId', btoa(String.fromCharCode.apply(null, getRandomBytes()))); // convert from Uint8Array to base64url string 
-  }
-
-  /**
-   * Generate a username and save it to local storage
-   *
-   */
-  function createUserName() {
-    localStorage.setItem('userName', `britneyspears${Date.now()}`); // ensure uniqueness
-  }
-
-  /**
-   * Get the userID from local storage random bytes
-   *
-   * @returns {Uint8Array | null} - returns the userID as a Uint8Array if it exists, otherwise null
-   */
-  function getUserID() {
-    const base64UserID = localStorage.getItem('userId');
-    if (base64UserID) {
-      return Uint8Array.from(atob(base64UserID), c => c.charCodeAt(0)); // convert from base64url string to Uint8Array
-    }
-    return null;
-  }
-
-  /**
-   * Return the username from local storage
-   * 
-   * @returns {string | null} - returns the userName as a string if it exists, otherwise null
-   * 
-   */
-  function getUserName() {
-    return localStorage.getItem('userName');
-  }
-
-  return {
-    createUserID,
-    createUserName,
-    getUserID,
-    getUserName
-  };
-})();
-
-// on page load
+// on page load (ie. wipes the encryptedEnvelope);
 const encryptedEnvelope = {};
-secureModule.generateMasterKeys();
-userProperties.createUserID();
-userProperties.createUserName();
-
+userProperties.createUserProperties();
 console.log("encryptedEnvelope:", encryptedEnvelope);
 
 // Event handlers
 elemMessage.addEventListener('input', handleMessageChange);
 document.getElementById('btnRegisterKey').addEventListener('click', handleRegisterKey);
 document.getElementById('btnAuthenticateKey').addEventListener('click', handleAuthenticateKey);
-document.getElementById('btnRotateMasterKeys').addEventListener('click', handleRotateMasterKey);
+document.getElementById('btnRotateMasterKeys').addEventListener('click', handleRotateMasterKeys);
 document.getElementById('btnProtect').addEventListener('click', handleEncrypt);
 document.getElementById('btnRead').addEventListener('click', handleDecrypt);
 document.getElementById('btnShowFirstTime').addEventListener('click', handleShowFirstTime);
@@ -182,40 +166,23 @@ document.addEventListener('keyup', handleDocumentKeyUp);
 async function handleRegisterKey() {
   try {
     console.log("Registering the security key...");
-
-    let userID = userProperties.getUserID();
-    if (!userID) {
-      userProperties.createUserID();
-      userID = userProperties.getUserID();
-    };
-
-    let userName = userProperties.getUserName();
-    if (!userName) {
-      userProperties.createUserID();
-      userName = userProperties.getUserName();
-    };
+    const { userID, userName } = userProperties.getUserProperties();
 
     const prfSalt = crypto.getRandomValues(new Uint8Array(new Array(32)));
     const credentialID = await registerWebAuthnAuthenticator({ userID, userName, prfSalt });
     if (!credentialID) throw new Error('The authenticator was not registered');
 
-    if (!encryptedEnvelope || Object.keys(encryptedEnvelope).length === 0) {
-      throw new Error('The encrypted envelope has not been properly configured');
+    const prfHandles = encryptedEnvelope.prfHandles;
+    if (prfHandles && prfHandles.length) {
+      prfHandles.push({ credentialID, prfSalt });
+    } else {
+      Object.assign(encryptedEnvelope, { prfHandles: [{ credentialID, prfSalt }] });
     }
 
-    const prfHandles = encryptedEnvelope.prfHandles;
-    if (!prfHandles) throw new Error('The PRF handle has not been setup');
-
-    prfHandles.push({
-      credentialID, // ArrayBuffer
-      prfSalt // Uint8Array
-    });
-
-    console.log("Successfully registered the security key, please authenticate the key - needed to get the PRF output & derive the other keys")
-    const msg = 'Successfully registered the security key. Please authenticte the key.';
+    console.log("The security key was successfully registered! Press `Authenticate` to continue key setup.");
+    const msg = "The security key was successfully registered! Press `Authenticate` to continue key setup.";
     writeToDebug(msg);
     alert(msg);
-
     handleCloseFirstTime();
   } catch (err) {
     console.error(err.stack);
@@ -241,9 +208,6 @@ async function handleAuthenticateKey() {
 
     const { credentialID, prfOutput } = await getWebAuthnResults({ prfHandles });
     if (!credentialID || !prfOutput) throw new Error('Received missing or undefined results from the WebAuthn extension');
-
-    const prfHandle = prfHandles.find(h => bufferToBase64URLString(h.credentialID) === bufferToBase64URLString(credentialID));
-    if (!prfHandle) throw new Error('Could not retrieve the associated PRF handle');
 
     // generate a local ECDH key pair
     const localECDHKeypair = await generateLocalECDHKeyPairJWKs();
@@ -297,8 +261,8 @@ async function handleAuthenticateKey() {
     }
 
     if (
-      !localECDHPrivateKeyWrappingKeyJWK.key_ops.includes("wrapKey") ||
-      !localECDHPrivateKeyWrappingKeyJWK.key_ops.includes("unwrapKey")
+      !localECDHPrivateKeyWrappingKeyJWK.key_ops?.includes("wrapKey") ||
+      !localECDHPrivateKeyWrappingKeyJWK.key_ops?.includes("unwrapKey")
     ) {
       throw new Error('The local ECDH private key wrapping key does not have the correct key usages (wrapKey and unwrapKey)');
     }
@@ -319,92 +283,20 @@ async function handleAuthenticateKey() {
       throw new Error('Failed to wrap the local ECDH private key JWK');
     }
 
-    // derive a master wrapping key from the local ECDH public key and the master ECDH private key
-    const masterECDHPrivateKeyJWK = secureModule.getMasterECDHPrivateKey();
-
-    if (
-      !masterECDHPrivateKeyJWK ||
-      typeof masterECDHPrivateKeyJWK !== 'object' ||
-      masterECDHPrivateKeyJWK.kty !== 'EC' ||
-      masterECDHPrivateKeyJWK.crv !== "P-256" ||
-      masterECDHPrivateKeyJWK.x?.length !== 43 ||
-      masterECDHPrivateKeyJWK.y?.length !== 43 ||
-      masterECDHPrivateKeyJWK.d?.length !== 43
-    ) {
-      throw new Error('The master ECDH private key is not a valid JWK');
-    }
-
-    if (!masterECDHPrivateKeyJWK.key_ops.includes("deriveKey")) throw new Error('The master ECDH private key does not have the correct key usage (deriveKey)');
-
-    const masterKeyWrappingKeyJWK = await generateMasterKeyWrappingKey({ 
-      localECDHPublicKeyJWK, 
-      masterECDHPrivateKeyJWK 
-    });
-
-    if (
-      !masterKeyWrappingKeyJWK ||
-      typeof masterKeyWrappingKeyJWK !== 'object' ||
-      masterKeyWrappingKeyJWK.alg !== 'A256GCM' ||
-      masterKeyWrappingKeyJWK.k?.length !== 43 ||
-      masterKeyWrappingKeyJWK.kty !== 'oct'
-    ) {
-      throw new Error('Failed to generate a valid master key wrapping key JWK');
-    }
-
-    if (
-      !masterKeyWrappingKeyJWK.key_ops.includes("wrapKey") ||
-      !masterKeyWrappingKeyJWK.key_ops.includes("unwrapKey")
-    ) {
-      throw new Error('The master key wrapping key does not have the correct key usages (wrapKey and unwrapKey)');
-    }
-
-    // securely retrieve the master key
-    const masterKeyJWK = secureModule.getMasterKey();
-
-    if (
-      !masterKeyJWK ||
-      typeof masterKeyJWK !== 'object' ||
-      masterKeyJWK.alg !== 'A256GCM' ||
-      masterKeyJWK.k?.length !== 43 ||
-      masterKeyJWK.kty !== 'oct'
-    ) {
-      throw new Error('The master key is not a valid JWK');
-    }
-
-    if (
-      !masterKeyJWK.key_ops.includes("encrypt") ||
-      !masterKeyJWK.key_ops.includes("decrypt")
-    ) {
-      throw new Error('The master key JWK does not have the correct key usages (encrypt and decrypt)');
-    }
-
-    // wrap the master key
-    const wrappedMasterKeyIV = crypto.getRandomValues(new Uint8Array(new Array(12)));
-    const wrappedMasterKeyJWK = await wrapMasterKey({ 
-      masterKeyJWK,
-      wrappedMasterKeyIV,
-      masterKeyWrappingKeyJWK
-    });
-
-    if (
-      !wrappedMasterKeyJWK ||
-      !(wrappedMasterKeyJWK instanceof ArrayBuffer) ||
-      wrappedMasterKeyJWK.byteLength !== 138
-    ) {
-      throw new Error('Failed to wrap the master key');
-    }
+    const prfHandle = prfHandles.find(h => bufferToBase64URLString(h.credentialID) === bufferToBase64URLString(credentialID));
+    if (!prfHandle) throw new Error('Could not retrieve the associated PRF handle');
 
     const updateData = {
       hkdfSalt,
       localECDHPublicKeyJWK,
       wrappedLocalECDHPrivateKeyJWK,
       wrappedLocalECDHPrivateKeyIV,
-      wrappedMasterKeyJWK,
-      wrappedMasterKeyIV
     };
-    Object.assign(prfHandle, updateData);
 
-    console.log("Successfully authenticated the security key. You can now encrypt & decrypt messages here.");
+    Object.assign(prfHandle, updateData);
+    await handleRotateMasterKeys();
+
+    console.log("The security key has been successfully authenticated. You can now encrypt & decrypt messages here.");
     const msg = 'Your security key can now be used to encrypt messages with this site.';
     writeToDebug(msg);
     alert(msg);
@@ -428,12 +320,11 @@ async function handleEncrypt() {
     }
 
     const { masterECDHPublicKeyJWK, prfHandles } = encryptedEnvelope;
-
-    console.log("Deriving the master key...")
+    console.log("Deriving the master key...");
     const masterKeyJWK = await deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles });
     if (!masterKeyJWK) throw new Error('Failed to derive the master key');
 
-    console.log("Encrypting message...")
+    console.log("Encrypting message...");
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ciphertext = await encrypt({ cleartext: elemMessage.value ?? '', iv, masterKeyJWK });
     if (!ciphertext) throw new Error('Failed to encrypt the message');
@@ -467,8 +358,7 @@ async function handleDecrypt() {
     }
 
     const { iv, ciphertext, masterECDHPublicKeyJWK, prfHandles } = encryptedEnvelope;
-
-    console.log("Deriving the master key...")
+    console.log("Deriving the master key...");
     const masterKeyJWK = await deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles });
     if (!masterKeyJWK) throw new Error('Failed to derive the master key');
 
@@ -492,7 +382,7 @@ async function handleDecrypt() {
  * and wrap the master key with a new master key wrapping key for each PRF handle
  * 
  */
-async function handleRotateMasterKey() {
+async function handleRotateMasterKeys() {
   try {
     console.log("Rotating the master keys...")
     if (!encryptedEnvelope || Object.keys(encryptedEnvelope).length === 0) {
@@ -501,70 +391,32 @@ async function handleRotateMasterKey() {
 
     if (encryptedEnvelope.ciphertext && encryptedEnvelope.iv) {
       // decrypt the existing ciphertext
-      console.log("Decrypting the existing ciphertext...");
+      console.log("Decrypting the vault...");
       await handleDecrypt();
     }
 
-    // rotate the master keys
-    secureModule.generateMasterKeys();
+    // TODO: ensure the prior master key can be recovered and data recovered if anything fails...
+    const masterKeyJWK = await secureModule.generateMasterKey();
+    const { masterECDHPublicKeyJWK, masterECDHPrivateKeyJWK } = await secureModule.generateMasterECDHKeyPairJWKs();
+    Object.assign(encryptedEnvelope, { masterECDHPublicKeyJWK });
 
     if (elemMessage.value) {
       // encrypt the cleartext with the new master key
-      console.log("Re-encrypting the data...");
+      console.log("Re-encrypting the vault...");
       await handleEncrypt();
-    }
-
-    // derive a master wrapping key from the local ECDH public key and the master ECDH private key
-
-    // "securely" retrieve the master ECDH private key
-    const masterECDHPrivateKeyJWK = secureModule.getMasterECDHPrivateKey();
-
-    if (
-      !masterECDHPrivateKeyJWK ||
-      typeof masterECDHPrivateKeyJWK !== 'object' ||
-      masterECDHPrivateKeyJWK.kty !== 'EC' ||
-      masterECDHPrivateKeyJWK.crv !== "P-256" ||
-      masterECDHPrivateKeyJWK.x?.length !== 43 ||
-      masterECDHPrivateKeyJWK.y?.length !== 43 ||
-      masterECDHPrivateKeyJWK.d?.length !== 43
-    ) {
-      throw new Error('The master ECDH private key is not a valid JWK');
-    }
-
-    if (!masterECDHPrivateKeyJWK.key_ops.includes("deriveKey")) throw new Error('The master ECDH private key does not have the correct key usage (deriveKey)');
-
-    // "securely" retrieve the master key
-    const masterKeyJWK = secureModule.getMasterKey();
-
-    if (
-      !masterKeyJWK ||
-      typeof masterKeyJWK !== 'object' ||
-      masterKeyJWK.alg !== 'A256GCM' ||
-      masterKeyJWK.k?.length !== 43 ||
-      masterKeyJWK.kty !== 'oct'
-    ) {
-      throw new Error('The master key is not a valid JWK');
-    }
-
-    if (
-      !masterKeyJWK.key_ops.includes("encrypt") ||
-      !masterKeyJWK.key_ops.includes("decrypt")
-    ) {
-      throw new Error('The master key JWK does not have the correct key usages (encrypt and decrypt)');
-    }
-
-    // need to ensure the master key can be recovered if anything fails...
-
-    if (!encryptedEnvelope || Object.keys(encryptedEnvelope).length === 0) {
-      throw new Error('The encrypted envelope has not been properly configured');
     }
 
     const prfHandles = encryptedEnvelope.prfHandles;
     if (!prfHandles || !prfHandles.length) throw new Error('There are no saved PRF handles');
     
-    console.log("Going through each PRF handle and wrapping the master key...");
-    // generate a new masterkey wrapping key and wrap the master key with it for each PRF handle
+    // for each PRF handle: derive a master wrapping key from the local ECDH public key and the master ECDH private key, then wrap the master key with it
+    console.log("Going through each PRF handle and wrapping the new master key...");
+
+    let count = 0;
     for (const h of prfHandles) {
+      count++;
+      console.log(`Updating PRF handle #${count}`);
+
       const masterKeyWrappingKeyJWK = await generateMasterKeyWrappingKey({ 
         localECDHPublicKeyJWK: h.localECDHPublicKeyJWK, 
         masterECDHPrivateKeyJWK 
@@ -608,6 +460,7 @@ async function handleRotateMasterKey() {
         wrappedMasterKeyIV
       };
       Object.assign(h, updateData);
+      console.log(`PRF handle #${count} successfully updated`);
     }
 
     console.log("All PRF handles updated. Master key rotation successful.");

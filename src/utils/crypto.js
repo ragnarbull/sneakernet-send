@@ -433,7 +433,7 @@ async function decrypt({ ciphertext, iv, masterKeyJWK }) {
  * Derive the master key to encrypt/decrypt a payload
  *
  * @param {any[]} prfHandles - array containing all of the saved PRF handles
- * @param {masterECDHPublicKey} masterECDHPublicKeyJWK - The master ECDH public key
+ * @param {JsonWebKey} masterECDHPublicKeyJWK - The master ECDH public key
  * 
  * @returns {Promise<JsonWebKey>} - A promise that resolves to the master key as a JsonWebKey
  */
@@ -442,7 +442,6 @@ async function deriveMasterKey({ prfHandles, masterECDHPublicKeyJWK }) {
     if (!prfHandles || !prfHandles.length || !masterECDHPublicKeyJWK) throw new Error('Input elements for deriveMasterKey are undefined or missing');
 
     if (
-      !masterECDHPublicKeyJWK ||
       typeof masterECDHPublicKeyJWK !== 'object' ||
       masterECDHPublicKeyJWK.kty !== 'EC' ||
       masterECDHPublicKeyJWK.crv !== "P-256" ||
@@ -454,7 +453,6 @@ async function deriveMasterKey({ prfHandles, masterECDHPublicKeyJWK }) {
 
     const { credentialID, prfOutput } = await getWebAuthnResults({ prfHandles });
     if (!credentialID || !prfOutput) throw new Error('Received missing or undefined results from the WebAuthn extension');
-
     const prfHandle = prfHandles.find(h => bufferToBase64URLString(h.credentialID) === bufferToBase64URLString(credentialID));
     if (!prfHandle) throw new Error('Could not retrieve the associated PRF handle');
 
