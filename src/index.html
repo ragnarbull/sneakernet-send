@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sneakernet Send 👟</title>
+    <title>Skynet Chat</title>
     <style>
       :root {
         --light-1: #bbbbbb;
@@ -171,11 +171,10 @@
   <body>
     <div class="container">
       <header>
-        <h1>Sneakernet Send 👟</h1>
+        <h1>SkyNet Chat </h1>
         <div>
-          <button id="btnShowFirstTime">Register</button>
-          <button id="btnAuthenticateKey">Authenticate</button>
-          <button id="btnRotateMasterKeys">Rotate</button>
+          <button id="btnShowFirstTime">Register Security Key</button>
+          <button id="btnRotateMasterKeys">Rotate Master Keys</button>
         </div>
       </header>
 
@@ -186,17 +185,17 @@
           id="message"
           cols="30"
           rows="15"
-          placeholder="Text to protect, or protected text to read"
+          placeholder="Text to encrypt, or encrypted text to decrypt"
         ></textarea>
         <section id="controls">
           <p>
-            <button id="btnProtect">Protect Message</button>
+            <button id="btnEncrypt">Encrypt Message</button>
             <br />
             <br />
             Enter your private message into the box above then encrypt it.
           </p>
           <p>
-            <button id="btnRead">Read Message</button>
+            <button id="btnDecrypt">Decrypt Message</button>
             <br />
             <br />
             Enter an encrypted message into the box above then decrypt it.
@@ -221,9 +220,9 @@
           <summary>
             <h2 id="faqs-title">FAQs</h2>
           </summary>
-          <!-- How do I protect a message? -->
+          <!-- How do I encrypt a message? -->
           <section>
-            <h3>How do I protect a message?</h3>
+            <h3>How do I encrypt a message?</h3>
             <p>
               If this is your first time here, configure your security key (see
               <strong>"First time here?"</strong> above) before proceeding:
@@ -233,7 +232,7 @@
                 <strong>Type your message</strong> into the text box at the top
                 of the page.
               </li>
-              <li>Click the <strong>Protect Message</strong> button above.</li>
+              <li>Click the <strong>Encrypt Message</strong> button above.</li>
               <li>
                 <strong>Complete the WebAuthn authentication</strong> with the
                 security key you prepared earlier.
@@ -247,33 +246,33 @@
                 the intended recipient however you want (but not together.)
               </li>
             </ol>
-            <p>A protected message will look like this:</p>
+            <p>An encrypted message will look like this:</p>
             <p class="example">
               hx8n0vIjRG_LhHzkrr83icFjvv45K3zyN3MqKl_Q9UUWCn8x8CzEIHt5:PnZ4Q2GYaP9qyXS-:V776nkChBS2U1RU0-NtpMVYjLPN-NjfDIsc1oMH4p-gJ1SflxDBS6dcK4qy0ZcSq
             </p>
             <p>
-              Protected messages are encrypted using AES-256-GCM encryption.
+              Encrypted messages are encrypted using AES-256-GCM encryption.
             </p>
             <p>
               <strong>
-                Only the recipient of both the protected message and the
-                security key can read a protected message!
+                Only the recipient of both the encrypted message and the
+                security key can read an encrypted message!
               </strong>
             </p>
           </section>
 
-          <!-- How do I read a protected message? -->
+          <!-- How do I read an encrypted message? -->
           <section>
-            <h3>How do I read a protected message?</h3>
+            <h3>How do I read an encrypted message?</h3>
             <ol>
               <li>
-                <strong>Paste the protected message</strong> into the text box
+                <strong>Paste the encrypted message</strong> into the text box
                 at the top of the page.
               </li>
-              <li>Click the <strong>Read Message</strong> button above.</li>
+              <li>Click the <strong>Decrypt Message</strong> button above.</li>
               <li>
                 <strong>Complete the WebAuthn authentication</strong> with the
-                security key that was used to protect the message.
+                security key that was used to encrypt the message.
               </li>
               <li>
                 <strong>Read the original message</strong> that appears in the
@@ -310,26 +309,13 @@
             </p>
             <p>
               You can also View Source in the browser or
-              <a href="https://github.com/MasterKale/sneakernet-send">
+              <a href="https://github.com/ragnarbull/sneakernet-send">
                 see the code on GitHub</a
               >
               to make sure this site is on the up-and-up.
             </p>
           </section>
 
-          <!-- But...why? -->
-          <section>
-            <h3>But why?</h3>
-            <p>A dream, fulfilled...</p>
-            <p>
-              <img
-                class="but-why"
-                src="but-why.png"
-                alt="I keep diving deeper and deeper into WebAuthn, spurred on by hacker fantasies in which sneakernet distribution of secure hardware authenticators is the only way to fight the corporations"
-                loading="lazy"
-              />
-            </p>
-          </section>
         </details>
       </section>
 
@@ -357,15 +343,15 @@
               WebAuthn's "prf" extension
             </a>
             to perform end-to-end encryption, entirely in the browser, of the
-            message you want to protect.
+            message you want to encrypt.
             <strong>No data leaves the browser.</strong>
           </p>
           <p>
             You will need an OS and browser that supports the "prf" extension,
             as well as an authenticator that supports the CTAP2 "hmac-secret"
-            extension. For best results (as of mid-2023) try
-            <strong>macOS Chrome 116</strong>, and a recent
-            <strong>FIDO2 security key</strong>. OS, browser, and authenticator
+            extension. For best results (as of Q3-2023) try
+            <strong>macOS/Windows Chrome >116</strong>, and a recent
+            <strong>FIDO2 security key</strong> or <strong>Android >13 phone</strong>. OS, browser, and authenticator
             support is subject to change.
           </p>
           <p>
