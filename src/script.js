@@ -166,11 +166,11 @@ console.log("encryptedEnvelope:", encryptedEnvelope);
 
 // Event handlers
 elemMessage.addEventListener('input', handleMessageChange);
-document.getElementById('btnPrepare').addEventListener('click', handleRegisterKey);
+document.getElementById('btnRegisterKey').addEventListener('click', handleRegisterKey);
 document.getElementById('btnAuthenticateKey').addEventListener('click', handleAuthenticateKey);
+document.getElementById('btnRotateMasterKeys').addEventListener('click', handleRotateMasterKey);
 document.getElementById('btnProtect').addEventListener('click', handleEncrypt);
 document.getElementById('btnRead').addEventListener('click', handleDecrypt);
-document.getElementById('btnRotateMasterKeys').addEventListener('click', handleRotateMasterKey);
 document.getElementById('btnShowFirstTime').addEventListener('click', handleShowFirstTime);
 document.getElementById('btnCloseFirstTime').addEventListener('click', handleCloseFirstTime);
 document.addEventListener('keyup', handleDocumentKeyUp);
@@ -190,7 +190,7 @@ async function handleRegisterKey() {
     };
 
     let userName = userProperties.getUserName();
-    if (!userID) {
+    if (!userName) {
       userProperties.createUserID();
       userName = userProperties.getUserName();
     };
