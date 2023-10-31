@@ -452,8 +452,11 @@ async function deriveMasterKey({ prfHandles, masterECDHPublicKeyJWK }) {
       throw new Error('Failed to retrieve a valid master ECDH public key JWK');
     }
 
-    const { prfOutput, prfHandle } = await getWebAuthnResults({ prfHandles })
-    if (!prfOutput || !prfHandle) throw new Error('Received missing or undefined results from the WebAuthn extension');
+    const { credentialID, prfOutput } = await getWebAuthnResults({ prfHandles });
+    if (!credentialID || !prfOutput) throw new Error('Received missing or undefined results from the WebAuthn extension');
+
+    const prfHandle = prfHandles.find(h => bufferToBase64URLString(h.credentialID) === bufferToBase64URLString(credentialID));
+    if (!prfHandle) throw new Error('Could not retrieve the associated PRF handle');
 
     const { 
       hkdfSalt,

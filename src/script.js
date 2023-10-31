@@ -58,20 +58,17 @@ const secureModule = (function () {
 
       masterKeyJWK = await generateMasterKey();
       masterECDHKeypairJWKs = await generateMasterECDHKeyPairJWKs();
-
-      console.log("Generated a new master AES256GCM key...");
-      console.log("Generated a new master EC-P256 keypair...");
+      console.log("Generated new master keys...");
 
       if (encryptedEnvelope && Object.keys(encryptedEnvelope).length && encryptedEnvelope.prfHandles && encryptedEnvelope.prfHandles.length) {
         // exisitng PRF handles (don't wipe them)!!!
-        console.log("Found existing PRF handles...");
         const updateData = {
           masterECDHPublicKeyJWK: masterECDHKeypairJWKs.publicKey,
         };
         Object.assign(encryptedEnvelope, updateData);
       } else {
         // first authenticator so no PRF handles
-        console.log("Ready to configure the first authenticator...");
+        console.log("Ready to register the first authenticator...");
         const updateData = {
           masterECDHPublicKeyJWK: masterECDHKeypairJWKs.publicKey,
           prfHandles: []
@@ -184,6 +181,8 @@ document.addEventListener('keyup', handleDocumentKeyUp);
  */
 async function handleRegisterKey() {
   try {
+    console.log("Registering the security key...");
+
     let userID = userProperties.getUserID();
     if (!userID) {
       userProperties.createUserID();
@@ -212,7 +211,8 @@ async function handleRegisterKey() {
       prfSalt // Uint8Array
     });
 
-    const msg = 'Your security key can now be used to encrypt messages with this site.';
+    console.log("Successfully registered the security key, please authenticate the key - needed to get the PRF output & derive the other keys")
+    const msg = 'Successfully registered the security key. Please authenticte the key.';
     writeToDebug(msg);
     alert(msg);
 
@@ -230,6 +230,8 @@ async function handleRegisterKey() {
  */
 async function handleAuthenticateKey() {
   try {
+    console.log("Authenticating the security key...");
+
     if (!encryptedEnvelope || Object.keys(encryptedEnvelope).length === 0) {
       throw new Error('The encrypted envelope has not been properly configured');
     }
@@ -237,8 +239,11 @@ async function handleAuthenticateKey() {
     const prfHandles = encryptedEnvelope.prfHandles;
     if (!prfHandles || !prfHandles.length) throw new Error('There are no saved PRF handles or they are empty');
 
-    const { prfOutput, prfHandle } = await getWebAuthnResults({ prfHandles })
-    if (!prfOutput || !prfHandle) throw new Error('Received missing or undefined results from the WebAuthn extension');
+    const { credentialID, prfOutput } = await getWebAuthnResults({ prfHandles });
+    if (!credentialID || !prfOutput) throw new Error('Received missing or undefined results from the WebAuthn extension');
+
+    const prfHandle = prfHandles.find(h => bufferToBase64URLString(h.credentialID) === bufferToBase64URLString(credentialID));
+    if (!prfHandle) throw new Error('Could not retrieve the associated PRF handle');
 
     // generate a local ECDH key pair
     const localECDHKeypair = await generateLocalECDHKeyPairJWKs();
@@ -399,6 +404,7 @@ async function handleAuthenticateKey() {
     };
     Object.assign(prfHandle, updateData);
 
+    console.log("Successfully authenticated the security key. You can now encrypt & decrypt messages here.");
     const msg = 'Your security key can now be used to encrypt messages with this site.';
     writeToDebug(msg);
     alert(msg);
@@ -423,9 +429,11 @@ async function handleEncrypt() {
 
     const { masterECDHPublicKeyJWK, prfHandles } = encryptedEnvelope;
 
+    console.log("Deriving the master key...")
     const masterKeyJWK = await deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles });
     if (!masterKeyJWK) throw new Error('Failed to derive the master key');
 
+    console.log("Encrypting message...")
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ciphertext = await encrypt({ cleartext: elemMessage.value ?? '', iv, masterKeyJWK });
     if (!ciphertext) throw new Error('Failed to encrypt the message');
@@ -437,6 +445,7 @@ async function handleEncrypt() {
     const b64urlNonce = bufferToBase64URLString(iv);
     const toReturn = `${b64urlEncrypted}:${b64urlNonce}`;
 
+    console.log("Messaged encrypted...")
     writeToDebug(`Encrypted Message: ${toReturn}`);
     writeToOutput(toReturn.trim());
 
@@ -459,12 +468,15 @@ async function handleDecrypt() {
 
     const { iv, ciphertext, masterECDHPublicKeyJWK, prfHandles } = encryptedEnvelope;
 
+    console.log("Deriving the master key...")
     const masterKeyJWK = await deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles });
     if (!masterKeyJWK) throw new Error('Failed to derive the master key');
 
+    console.log("Encrypting message...")
     const cleartext = await decrypt({ ciphertext, iv, masterKeyJWK });
     if (!cleartext) throw new Error('Failed to decrypt the message');
 
+    console.log("Messaged decrypted...")
     writeToDebug(`Original Message: ${cleartext}`);
     writeToOutput(cleartext);
 
@@ -477,11 +489,12 @@ async function handleDecrypt() {
 
 /**
  * Rotate the master AES256GCM key and the master EC-P256 keypair
- * and wrap the master key with a new wrapping key for each PRF handle
+ * and wrap the master key with a new master key wrapping key for each PRF handle
  * 
  */
 async function handleRotateMasterKey() {
   try {
+    console.log("Rotating the master keys...")
     if (!encryptedEnvelope || Object.keys(encryptedEnvelope).length === 0) {
       throw new Error('The encrypted envelope has not been properly configured');
     }
@@ -540,7 +553,7 @@ async function handleRotateMasterKey() {
       throw new Error('The master key JWK does not have the correct key usages (encrypt and decrypt)');
     }
 
-    console.log("Master keys have been successfully rotated..."); // need to ensure the master key can be recovered if anything fails...
+    // need to ensure the master key can be recovered if anything fails...
 
     if (!encryptedEnvelope || Object.keys(encryptedEnvelope).length === 0) {
       throw new Error('The encrypted envelope has not been properly configured');
@@ -595,8 +608,9 @@ async function handleRotateMasterKey() {
         wrappedMasterKeyIV
       };
       Object.assign(h, updateData);
-      console.log("Successfully updated the PRF handle with the new wrapped master key...");
     }
+
+    console.log("All PRF handles updated. Master key rotation successful.");
   } catch (err) {
     console.error(err.stack);
     writeToDebug(err.stack);

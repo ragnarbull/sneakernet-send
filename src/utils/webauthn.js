@@ -63,32 +63,40 @@ async function registerWebAuthnAuthenticator({ userID, userName, prfSalt }) {
 }
 
 /**
- * Retrieve the WebAuthn PRF extension results [prfOutput], credential ID [credentialID] 
+ * Retrieve the security key credential ID [credentialID] and WebAuthn PRF extension results
  * and the corresponding cross-platfrom authenticator PRF handle
  *
  * @param {any[]} prfHandles - array containing all of the saved PRF handles
- * @returns {Promise<{credentialID: ArrayBuffer, prfOutput: ArrayBuffer, prfHandle: any }>} - A promise that resolves to an object containing the credential ID, PRF output and associated PRF handle
+ * @returns {Promise<{credentialID: ArrayBuffer, prfOutput: ArrayBuffer}>} - A promise that resolves to an object containing the credential ID and PRF output associated with the security key used
  */
 async function getWebAuthnResults({ prfHandles }) {
   try {
     if (!prfHandles || !prfHandles.length) throw new Error('Input elements for getPRFHandle are undefined or missing');
 
-    let authOptions;
-    for (const h of prfHandles) {
-      authOptions = {
-        publicKey: {
-          challenge: getRandomBytes(),
-          userVerification: 'discouraged', // standard says evalByCredential allows skipping UV?
-          extensions: {
-            prf: { evalByCredential: { [bufferToBase64URLString(h.credentialID)]: { first: h.prfSalt } } },
-          },
-          allowCredentials: [{ id: h.credentialID, type: 'public-key' }],
-        },
-      };
-    }
-     
-    console.log("Getting PRF results...");
+    const prfCredentials = {};
+    prfHandles.forEach(h => {
+      const key = bufferToBase64URLString(h.credentialID);
+      const value = { first: new Uint8Array(32) };
+      prfCredentials[key] = value;
+    });
 
+    const allowCredentials = [];
+    prfHandles.forEach(h => {
+      const value = { id: h.credentialID, type: 'public-key' };
+      allowCredentials.push(value);
+    });
+
+    const authOptions = {
+      publicKey: {
+        challenge: getRandomBytes(),
+        userVerification: 'required', // UV is forced
+        extensions: {
+          prf: { evalByCredential: prfCredentials }
+        },
+        allowCredentials,
+      },
+    };
+  
     const authCredential = await navigator.credentials.get(authOptions);
     const extResults = authCredential.getClientExtensionResults();
 
@@ -110,10 +118,7 @@ async function getWebAuthnResults({ prfHandles }) {
       throw new Error('Credential ID byte length is not equal to or greater than 16'); // 16 for Android, 48 for YubiKey 5C NFC Firmware >5.2
     }
 
-    const prfHandle = prfHandles.find(h => bufferToBase64URLString(h.credentialID) === bufferToBase64URLString(credentialID));
-    if (!prfHandle) throw new Error('Could not retrieve the associated PRF handle');
-
-    return { credentialID, prfOutput, prfHandle };
+    return { credentialID, prfOutput };
   } catch (err) {
     console.error(err.stack);
   }
