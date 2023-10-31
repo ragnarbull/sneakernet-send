@@ -29,13 +29,12 @@ async function registerWebAuthnAuthenticator({ userID, userName, prfSalt }) {
           authenticatorAttachment: 'cross-platform',
         },
         extensions: {
-          prf: { eval: { first: prfSalt } }, // should do second as well?
+          prf: { eval: { first: prfSalt } },
         },
       },
     });
 
     const extResults = regCredential.getClientExtensionResults();
-
     if (!extResults.prf?.enabled) {
       writeToDebug(`extResults: ${JSON.stringify(extResults)}`);
       const message = 'Your current OS, browser, and security key combination cannot be used with this site.';
@@ -43,11 +42,9 @@ async function registerWebAuthnAuthenticator({ userID, userName, prfSalt }) {
       alert(message);
       throw Error(message);
     }
-
-    console.log("PRF extension is compatible with this authenticator/client combo");
+    console.log("PRF extension IS compatible with this authenticator/client combo");
 
     const credentialID = base64URLStringToBuffer(regCredential.id);
-
     if (!credentialID || credentialID === undefined) {
       throw new Error('Credential ID is missing or undefined');
     } else if (!(credentialID instanceof ArrayBuffer)) {
@@ -55,7 +52,6 @@ async function registerWebAuthnAuthenticator({ userID, userName, prfSalt }) {
     } else if (!credentialID.byteLength >= 16) {
       throw new Error('Credential ID byte length is not equal to or greater than 16'); // 16 for Android, 48 for YubiKey 5C NFC Firmware >5.2
     }
-
     return credentialID;
   } catch (err) {
     console.error(err.stack);
@@ -106,7 +102,7 @@ async function getWebAuthnResults({ prfHandles }) {
     } else if (!(prfOutput instanceof ArrayBuffer)) {
       throw new Error('PRF output is not an ArrayBuffer');
     } else if (prfOutput.byteLength !== 32) {
-      throw new Error('PRF output byte length is not equal to 32');
+      throw new Error('PRF output byte length is not equal to 32'); // need to derive 256 bit key
     }
 
     const credentialID = base64URLStringToBuffer(authCredential.id);

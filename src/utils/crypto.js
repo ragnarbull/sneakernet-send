@@ -4,15 +4,14 @@ const textDecoder = new TextDecoder('utf-8');
 /**
  * Generate the local ECDH key pair
  *
- * @returns {Promise<{ publicKey: JsonWebKey, privateKey: JsonWebKey }>}
+ * @returns {Promise<{ localECDHPublicKeyJWK: JsonWebKey, localECDHPrivateKeyJWK: JsonWebKey }>}
  */
 async function generateLocalECDHKeyPairJWKs() {
   try {
-    const algorithm = { name: 'ECDH', namedCurve: 'P-256' };
-    const keyPair = await crypto.subtle.generateKey(algorithm, true, ['deriveKey']);
-    const publicKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
-    const privateKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
-    return { publicKey: publicKeyJWK, privateKey: privateKeyJWK };
+    const keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
+    const localECDHPublicKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+    const localECDHPrivateKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+    return { localECDHPublicKeyJWK, localECDHPrivateKeyJWK };
   } catch (err) {
     console.error(err.stack);
   }
@@ -558,5 +557,91 @@ async function deriveMasterKey({ prfHandles, masterECDHPublicKeyJWK }) {
     return masterKeyJWK;
   } catch (err) {
     console.error(err.stack);
+  }
+}
+
+/**
+ * Create the master symmetric encryption key from random bytes
+ *
+ * @returns {Promise<JsonWebKey>} - a Promise that returns the master key as a JWK
+ */
+async function generateMasterKey() {
+  try {
+    const masterKeyBytes = crypto.getRandomValues(new Uint8Array(32));
+    const masterKey = await crypto.subtle.importKey(
+      'raw',
+      masterKeyBytes,
+      { name: 'AES-GCM' },
+      true,
+      ['encrypt', 'decrypt']
+    );
+    const masterKeyJWK = await crypto.subtle.exportKey('jwk', masterKey);
+
+    if (
+      !masterKeyJWK ||
+      typeof masterKeyJWK !== 'object' ||
+      masterKeyJWK.alg !== 'A256GCM' ||
+      masterKeyJWK.k?.length !== 43 ||
+      masterKeyJWK.kty !== 'oct'
+    ) {
+      throw new Error('The master key is not a valid JWK');
+    }
+
+    if (
+      !masterKeyJWK.key_ops.includes("encrypt") ||
+      !masterKeyJWK.key_ops.includes("decrypt")
+    ) {
+      throw new Error('The master key JWK does not have the correct key usages (encrypt and decrypt)');
+    }
+    return masterKeyJWK;
+  } catch (err) {
+    console.error(err.stack);
+    writeToDebug(err.stack);
+    writeToOutput(`Error: ${err}`);
+  }
+}
+
+/**
+ * Generate the master ECDH key pair
+ *
+ * @returns {Promise<{ masterECDHPublicKeyJWK: JsonWebKey, masterECDHPrivateKeyJWK: JsonWebKey }>} - a Promise that returns an object containing the master ECDH key pair as JWKs
+ */
+async function generateMasterECDHKeyPairJWKs() {
+  try {
+    const algorithm = { name: 'ECDH', namedCurve: 'P-256' };
+    const keyPair = await crypto.subtle.generateKey(algorithm, true, ['deriveKey']);
+    const masterECDHPublicKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+    const masterECDHPrivateKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+    
+    if (
+      typeof masterECDHPublicKeyJWK !== 'object' ||
+      typeof masterECDHPublicKeyJWK !== 'object' ||
+      masterECDHPublicKeyJWK.kty !== 'EC' ||
+      masterECDHPublicKeyJWK.crv !== "P-256" ||
+      masterECDHPublicKeyJWK.x?.length !== 43 ||
+      masterECDHPublicKeyJWK.y?.length !== 43 ||
+      masterECDHPublicKeyJWK.key_ops?.length !== 0
+    ) {
+      throw new Error('The master ECDH public key is not a valid JWK');
+    }
+
+    if (
+      !masterECDHPrivateKeyJWK ||
+      typeof masterECDHPrivateKeyJWK !== 'object' ||
+      masterECDHPrivateKeyJWK.kty !== 'EC' ||
+      masterECDHPrivateKeyJWK.crv !== "P-256" ||
+      masterECDHPrivateKeyJWK.x?.length !== 43 ||
+      masterECDHPrivateKeyJWK.y?.length !== 43 ||
+      masterECDHPrivateKeyJWK.d?.length !== 43 || 
+      !masterECDHPrivateKeyJWK.key_ops?.includes("deriveKey")
+    ) {
+      throw new Error('The master ECDH private key is not a valid JWK');
+    }
+
+    return { masterECDHPublicKeyJWK, masterECDHPrivateKeyJWK };
+  } catch (err) {
+    console.error(err.stack);
+    writeToDebug(err.stack);
+    writeToOutput(`Error: ${err}`);
   }
 }

@@ -50,99 +50,6 @@ const userProperties = (function () {
   };
 })();
 
-const secureModule = (function () {
-  /**
-   * Create the master symmetric encryption key from random bytes
-   *
-   * @returns {Promise<JsonWebKey>} - a Promise that returns the master key as a JWK
-   */
-  async function generateMasterKey() {
-    try {
-      const masterKeyBytes = crypto.getRandomValues(new Uint8Array(32));
-      const masterKey = await crypto.subtle.importKey(
-        'raw',
-        masterKeyBytes,
-        { name: 'AES-GCM' },
-        true,
-        ['encrypt', 'decrypt']
-      );
-      const masterKeyJWK = await crypto.subtle.exportKey('jwk', masterKey);
-
-      if (
-        !masterKeyJWK ||
-        typeof masterKeyJWK !== 'object' ||
-        masterKeyJWK.alg !== 'A256GCM' ||
-        masterKeyJWK.k?.length !== 43 ||
-        masterKeyJWK.kty !== 'oct'
-      ) {
-        throw new Error('The master key is not a valid JWK');
-      }
-
-      if (
-        !masterKeyJWK.key_ops.includes("encrypt") ||
-        !masterKeyJWK.key_ops.includes("decrypt")
-      ) {
-        throw new Error('The master key JWK does not have the correct key usages (encrypt and decrypt)');
-      }
-      return masterKeyJWK;
-    } catch (err) {
-      console.error(err.stack);
-      writeToDebug(err.stack);
-      writeToOutput(`Error: ${err}`);
-    }
-  }
-
-  /**
-   * Generate the master ECDH key pair
-   *
-   * @returns {Promise<{ masterECDHPublicKeyJWK: JsonWebKey, masterECDHPrivateKeyJWK: JsonWebKey }>} - a Promise that returns an object containing the master ECDH key pair as JWKs
-   */
-  async function generateMasterECDHKeyPairJWKs() {
-    try {
-      const algorithm = { name: 'ECDH', namedCurve: 'P-256' };
-      const keyPair = await crypto.subtle.generateKey(algorithm, true, ['deriveKey']);
-      const masterECDHPublicKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
-      const masterECDHPrivateKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
-      
-      if (
-        typeof masterECDHPublicKeyJWK !== 'object' ||
-        typeof masterECDHPublicKeyJWK !== 'object' ||
-        masterECDHPublicKeyJWK.kty !== 'EC' ||
-        masterECDHPublicKeyJWK.crv !== "P-256" ||
-        masterECDHPublicKeyJWK.x?.length !== 43 ||
-        masterECDHPublicKeyJWK.y?.length !== 43 ||
-        masterECDHPublicKeyJWK.key_ops?.length !== 0
-      ) {
-        throw new Error('The master ECDH public key is not a valid JWK');
-      }
-
-      if (
-        !masterECDHPrivateKeyJWK ||
-        typeof masterECDHPrivateKeyJWK !== 'object' ||
-        masterECDHPrivateKeyJWK.kty !== 'EC' ||
-        masterECDHPrivateKeyJWK.crv !== "P-256" ||
-        masterECDHPrivateKeyJWK.x?.length !== 43 ||
-        masterECDHPrivateKeyJWK.y?.length !== 43 ||
-        masterECDHPrivateKeyJWK.d?.length !== 43 || 
-        !masterECDHPrivateKeyJWK.key_ops?.includes("deriveKey")
-      ) {
-        throw new Error('The master ECDH private key is not a valid JWK');
-      }
-
-      return { masterECDHPublicKeyJWK, masterECDHPrivateKeyJWK };
-    } catch (err) {
-      console.error(err.stack);
-      writeToDebug(err.stack);
-      writeToOutput(`Error: ${err}`);
-    }
-  }
-
-  return {
-    generateMasterKey,
-    generateMasterECDHKeyPairJWKs,
-  };
-})();
-
 // on page load (ie. wipes the encryptedEnvelope);
 const encryptedEnvelope = {};
 userProperties.createUserProperties();
@@ -151,12 +58,11 @@ console.log("encryptedEnvelope:", encryptedEnvelope);
 // Event handlers
 elemMessage.addEventListener('input', handleMessageChange);
 document.getElementById('btnRegisterKey').addEventListener('click', handleRegisterKey);
-document.getElementById('btnAuthenticateKey').addEventListener('click', handleAuthenticateKey);
-document.getElementById('btnRotateMasterKeys').addEventListener('click', handleRotateMasterKeys);
-document.getElementById('btnProtect').addEventListener('click', handleEncrypt);
-document.getElementById('btnRead').addEventListener('click', handleDecrypt);
 document.getElementById('btnShowFirstTime').addEventListener('click', handleShowFirstTime);
 document.getElementById('btnCloseFirstTime').addEventListener('click', handleCloseFirstTime);
+document.getElementById('btnRotateMasterKeys').addEventListener('click', handleRotateMasterKeys);
+document.getElementById('btnEncrypt').addEventListener('click', handleEncrypt);
+document.getElementById('btnDecrypt').addEventListener('click', handleDecrypt);
 document.addEventListener('keyup', handleDocumentKeyUp);
 
 /**
@@ -179,11 +85,14 @@ async function handleRegisterKey() {
       Object.assign(encryptedEnvelope, { prfHandles: [{ credentialID, prfSalt }] });
     }
 
-    console.log("The security key was successfully registered! Press `Authenticate` to continue key setup.");
-    const msg = "The security key was successfully registered! Press `Authenticate` to continue key setup.";
+    const msg = "The security key was successfully registered! Press enter to continue setting up the encryption keys.";
+
+    console.log(msg);
     writeToDebug(msg);
     alert(msg);
     handleCloseFirstTime();
+
+    await handleAuthenticateKey();
   } catch (err) {
     console.error(err.stack);
     writeToDebug(err.stack);
@@ -210,9 +119,7 @@ async function handleAuthenticateKey() {
     if (!credentialID || !prfOutput) throw new Error('Received missing or undefined results from the WebAuthn extension');
 
     // generate a local ECDH key pair
-    const localECDHKeypair = await generateLocalECDHKeyPairJWKs();
-    const localECDHPublicKeyJWK = localECDHKeypair.publicKey;
-    const localECDHPrivateKeyJWK = localECDHKeypair.privateKey;
+    const { localECDHPublicKeyJWK, localECDHPrivateKeyJWK } = await generateLocalECDHKeyPairJWKs();
 
     if (
       !localECDHPublicKeyJWK ||
@@ -400,8 +307,8 @@ async function handleRotateMasterKeys() {
     }
 
     // TODO: ensure the prior master key can be recovered and data recovered if anything fails...
-    const masterKeyJWK = await secureModule.generateMasterKey();
-    const { masterECDHPublicKeyJWK, masterECDHPrivateKeyJWK } = await secureModule.generateMasterECDHKeyPairJWKs();
+    const masterKeyJWK = await generateMasterKey();
+    const { masterECDHPublicKeyJWK, masterECDHPrivateKeyJWK } = await generateMasterECDHKeyPairJWKs();
     Object.assign(encryptedEnvelope, { masterECDHPublicKeyJWK });
 
     if (elemMessage.value) {
@@ -485,6 +392,7 @@ function handleDocumentKeyUp(e) {
     toggleDebugConsoleVisibility()
   }
 }
+
 /**
  * Support use of typing the toolbox emoji to reveal the debug console (for mobile)
  * @param {Event} e
