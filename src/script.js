@@ -334,11 +334,13 @@ async function handleEncrypt() {
 
     const b64urlEncrypted = bufferToBase64URLString(ciphertext);
     const b64urlNonce = bufferToBase64URLString(iv);
-    const toReturn = `${b64urlEncrypted}:${b64urlNonce}`;
+    const b64Ciphertext = `${b64urlEncrypted}:${b64urlNonce}`;
 
-    console.log("Messaged encrypted...")
-    writeToDebug(`Encrypted Message: ${toReturn}`);
-    writeToOutput(toReturn.trim());
+    console.log("Messaged encrypted...");
+    console.log("Base64 ciphertext:", b64Ciphertext);
+
+    writeToDebug(`Encrypted Message: ${b64Ciphertext}`);
+    writeToOutput(b64Ciphertext.trim());
 
   } catch (err) {
     console.error(err.stack);
@@ -366,7 +368,9 @@ async function handleDecrypt() {
     const cleartext = await decrypt({ ciphertext, iv, masterKeyJWK });
     if (!cleartext) throw new Error('Failed to decrypt the message');
 
-    console.log("Messaged decrypted...")
+    console.log("Messaged decrypted...");
+    console.log("Deciphered cleartext:", cleartext);
+
     writeToDebug(`Original Message: ${cleartext}`);
     writeToOutput(cleartext);
 
