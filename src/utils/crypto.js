@@ -350,7 +350,7 @@ async function unwrapMasterKey({ wrappedMasterKeyJWK, wrappedMasterKeyIV, master
 async function encrypt({ cleartext, iv, masterKeyJWK }) {
   try {
     if (!cleartext || !iv || !masterKeyJWK) throw new Error('Input objects for encrypt are undefined or missing.');
-    ValidationService.isValidMasterKeyJWK(masterKeyJWK);
+    ValidationService.isValidMasterKeyJWK({ masterKeyJWK });
 
     const importedMasterKey = await crypto.subtle.importKey(
       'jwk',
@@ -387,7 +387,7 @@ async function encrypt({ cleartext, iv, masterKeyJWK }) {
 async function decrypt({ ciphertext, iv, masterKeyJWK }) {
   try {
     if (!ciphertext|| !iv || !masterKeyJWK) throw new Error('Input objects for decrypt are undefined or missing.');
-    ValidationService.isValidMasterKeyJWK(masterKeyJWK);
+    ValidationService.isValidMasterKeyJWK({ masterKeyJWK });
 
     const importedMasterKey = await crypto.subtle.importKey(
       'jwk',
@@ -465,7 +465,7 @@ async function deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles }) {
       wrappedMasterKeyIV,
       masterKeyWrappingKeyJWK 
     });
-    ValidationService.isValidMasterKeyJWK(masterKeyJWK);
+    ValidationService.isValidMasterKeyJWK({ masterKeyJWK });
 
     return masterKeyJWK;
   } catch (err) {
@@ -489,7 +489,7 @@ async function generateMasterKey() {
       ['encrypt', 'decrypt']
     );
     const masterKeyJWK = await crypto.subtle.exportKey('jwk', masterKey);
-    ValidationService.isValidMasterKeyJWK(masterKeyJWK);
+    ValidationService.isValidMasterKeyJWK({ masterKeyJWK });
 
     return masterKeyJWK;
   } catch (err) {
@@ -592,29 +592,32 @@ function rotateMasterKeys({ encryptedEnvelope, currMasterECDHPublicKeyJWK, currW
  * Verify that the new master key can successfully encrypt & decypt
  * a randomly generated string (containing letters, numbers, symbols, emojis)
  * 
- * @param {JsonWebKey} masterKeyJWK - the new master key as a JsonWebKey
+ * @param {JsonWebKey} newMasterKeyJWK - the new master key as a JsonWebKey
  * 
  * @returns {Promise<boolean>} - a Promise that returns a boolean reprsenting if the verification was successful [true] or unsuccessful [false]
  */
-async function verifyEncryptionAndDecryption(masterKeyJWK) {
+async function verifyEncryptionAndDecryption(newMasterKeyJWK) {
   try {
-    if (!masterKeyJWK) throw new Error('Input elements for verifyEncryptionAndDecryption are undefined or missing');
+    console.log("Verifying encryption & decryption work as expected...");
+
+    if (!newMasterKeyJWK) throw new Error('Input elements for verifyEncryptionAndDecryption are undefined or missing');
 
     const cleartext = await generateRandomString(12);
     if (!cleartext) return false;
 
-    console.log("Encrypting randomly generated text...");
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ciphertext = await encrypt({ cleartext, iv, masterKeyJWK });
+    const ciphertext = await encrypt({ cleartext, iv, masterKeyJWK: newMasterKeyJWK });
     if (!ciphertext) return false;
 
-    console.log("Decrypting...")
-    const decryptedText = await decrypt({ ciphertext, iv, masterKeyJWK });
+    const decryptedText = await decrypt({ ciphertext, iv, masterKeyJWK: newMasterKeyJWK });
     if (!decryptedText) return false;
 
-    if (cleartext === decryptedText) {
+    if (compareStrings(cleartext, decryptedText)) {
+      console.log("All checks passed...")
       return true;
-    } else return false
+    } else {
+      console.log("Checks failed...")
+      return false};
   } catch (err) {
     console.error(err.stack);
     return false;
