@@ -113,6 +113,14 @@ function toggleDebugConsoleVisibility() {
   }
 }
 
+/**
+ * Helper function to find the PRF handle index
+ * 
+ * @param {Object} encryptedEnvelope - the encrypted envelope as an Object
+ * @param {ArrayBuffer} credentialID - credential ID returned from the WebAuthn authentication as an ArrayBuffer
+ * 
+ * @returns {Promise<boolean>} - a Promise that returns a boolean reprsenting if the verification was successful [true] or unsuccessful [false]
+ */
 async function findPrfHandleIndex({encryptedEnvelope, credentialID}) {
   const results = await Promise.all(encryptedEnvelope.prfHandles.map(async (h, index) => {
     const a = bufferToBase64URLString(h.credentialID);
@@ -129,4 +137,28 @@ async function findPrfHandleIndex({encryptedEnvelope, credentialID}) {
   }
 
   return prfHandleIndex;
+}
+
+/**
+ * Helper function to find the PRF handle index
+ * 
+ * @param {Number} length - the length of the random string to generate
+ * 
+ * @returns {Promise<string>} - a Promise that returns a randomly generated string of length [length]
+ */
+async function generateRandomString(length) {
+  const characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_-+=<>?/{}[]|🙂🌍🍎你好안녕🎉🚀🌟🔥🌈🎵" +
+    "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρστυφχψω" +
+    "ÅÄÖåäöéàèëüßñÇçİığŞşĞğŹźĄąĘęŻżĆćŠšĐđČčĹĺĽľŇňŔŕŠšŤť" +
+    "!#&^*+=<>[]{}|~`';:.,/?\"\\";
+  let randomString = "";
+  const characterArray = new Uint8Array(length);
+
+  crypto.getRandomValues(characterArray);
+
+  for (let i = 0; i < length; i++) {
+    randomString += characters[characterArray[i] % characters.length];
+  }
+
+  return randomString;
 }
