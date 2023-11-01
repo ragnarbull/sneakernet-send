@@ -2,7 +2,7 @@ class ValidationService {
   /**
    * Check the validity of a local ECDH public key JSON Web Key (JWK).
    * 
-   * @param {Object} localECDHPublicKeyJWK - the local ECDH public key JWK to validate
+   * @param {JsonWebKey} localECDHPublicKeyJWK - the local ECDH public key JWK to validate
    * @throws {Error} - Throws an error if the key is not valid.
    */
   static isValidLocalECDHPublicKeyJWK(localECDHPublicKeyJWK) {
@@ -22,7 +22,7 @@ class ValidationService {
   /**
    * Check the validity of a local ECDH private key JSON Web Key (JWK).
    * 
-   * @param {Object} localECDHPrivateKeyJWK - the local ECDH private key JWK to validate
+   * @param {JsonWebKey} localECDHPrivateKeyJWK - the local ECDH private key JWK to validate
    * @throws {Error} - Throws an error if the key is not valid.
    */
   static isValidLocalECDHPrivateKeyJWK(localECDHPrivateKeyJWK) {
@@ -43,7 +43,7 @@ class ValidationService {
   /**
    * Check the validity of a local ECDH private key wrapping key JSON Web Key (JWK).
    * 
-   * @param {Object} localECDHPrivateKeyWrappingKeyJWK - the local ECDH private key wrapping key JWK to validate
+   * @param {JsonWebKey} localECDHPrivateKeyWrappingKeyJWK - the local ECDH private key wrapping key JWK to validate
    * @throws {Error} - Throws an error if the key is not valid.
    */
   static isValidLocalECDHPrivateKeyWrappingKeyJWK(localECDHPrivateKeyWrappingKeyJWK) {
@@ -63,7 +63,7 @@ class ValidationService {
   /**
    * Check the validity of a master key wrapping key JSON Web Key (JWK).
    * 
-   * @param {Object} masterKeyWrappingKeyJWK - the master key wrapping key JWK to validate
+   * @param {JsonWebKey} masterKeyWrappingKeyJWK - the master key wrapping key JWK to validate
    * @throws {Error} - Throws an error if the key is not valid.
    */
   static isValidMasterKeyWrappingKeyJWK(masterKeyWrappingKeyJWK) {
@@ -115,7 +115,7 @@ class ValidationService {
   /**
    * Check the validity of a master ECDH public key JSON Web Key (JWK).
    * 
-   * @param {Object} masterECDHPublicKeyJWK - the master ECDH public key JWK to validate
+   * @param {JsonWebKey} masterECDHPublicKeyJWK - the master ECDH public key JWK to validate
    * @throws {Error} - Throws an error if the key is not valid.
    */
   static isValidMasterECDHPublicKeyJWK(masterECDHPublicKeyJWK) {
@@ -135,7 +135,7 @@ class ValidationService {
   /**
    * Check the validity of a master ECDH private key JSON Web Key (JWK).
    * 
-   * @param {Object} masterECDHPrivateKeyJWK - the master ECDH private key JWK to validate
+   * @param {JsonWebKey} masterECDHPrivateKeyJWK - the master ECDH private key JWK to validate
    * @throws {Error} - Throws an error if the key is not valid.
    */
   static isValidMasterECDHPrivateKeyJWK(masterECDHPrivateKeyJWK) {
@@ -156,10 +156,10 @@ class ValidationService {
   /**
    * Check the validity of a master key JSON Web Key (JWK).
    * 
-   * @param {Object} masterKeyJWK - the master key JWK to validate
+   * @param {JsonWebKey} masterKeyJWK - the master key JWK to validate
    * @throws {Error} - Throws an error if the key is not valid.
    */
-  static isValidMasterKeyJWK(masterKeyJWK) {
+  static isValidMasterKeyJWK({ masterKeyJWK }) {
     if (
       !masterKeyJWK ||
       typeof masterKeyJWK !== 'object' ||
