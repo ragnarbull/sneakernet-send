@@ -112,3 +112,21 @@ function toggleDebugConsoleVisibility() {
     elemDebugContainer.classList.add('hide');
   }
 }
+
+async function findPrfHandleIndex({encryptedEnvelope, credentialID}) {
+  const results = await Promise.all(encryptedEnvelope.prfHandles.map(async (h, index) => {
+    const a = bufferToBase64URLString(h.credentialID);
+    const b = bufferToBase64URLString(credentialID);
+    if (a === b) {
+      return index;
+    }
+    return -1;
+  }));
+
+  const prfHandleIndex = results.find((index) => index !== -1);
+  if (prfHandleIndex === undefined) {
+    throw new Error('Could not retrieve the associated PRF handle');
+  }
+
+  return prfHandleIndex;
+}

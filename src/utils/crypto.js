@@ -8,7 +8,7 @@ const textDecoder = new TextDecoder('utf-8');
  */
 async function generateLocalECDHKeyPairJWKs() {
   try {
-    const keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
+    const keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-521' }, true, ['deriveKey']);
     const localECDHPublicKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
     const localECDHPrivateKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
     return { localECDHPublicKeyJWK, localECDHPrivateKeyJWK };
@@ -70,7 +70,7 @@ async function wraplocalECDHPrivateKey({ localECDHPrivateKeyJWK, wrappedLocalECD
     const importedLocalECDHPrivateKey = await crypto.subtle.importKey(
       'jwk',
       localECDHPrivateKeyJWK,
-      { name: 'ECDH', namedCurve: 'P-256' },
+      { name: 'ECDH', namedCurve: 'P-521' },
       true,
       ['deriveKey']
     );
@@ -110,40 +110,41 @@ async function wraplocalECDHPrivateKey({ localECDHPrivateKeyJWK, wrappedLocalECD
  */
 async function generateMasterKeyWrappingKey({ localECDHPublicKeyJWK, masterECDHPrivateKeyJWK }) {
   try {
-    if (!localECDHPublicKeyJWK || !masterECDHPrivateKeyJWK) throw new Error('Input objects for generateMasterWrappingKey are undefined or missing.');
+    if (!localECDHPublicKeyJWK || !masterECDHPrivateKeyJWK) throw new Error('Input objects for generateMasterKeyWrappingKey are undefined or missing.');
    
     const importedPublicKey = await crypto.subtle.importKey(
       'jwk',
       localECDHPublicKeyJWK,
-      { name: 'ECDH', namedCurve: 'P-256' },
+      { name: 'ECDH', namedCurve: 'P-521' },
       true,
       []
     );
 
     if (!importedPublicKey) throw new Error('Failed to import the local ECDH public key.');
 
-    const importedPrivateKey = await crypto.subtle.importKey(
+    const importedBaseKey = await crypto.subtle.importKey(
       'jwk',
       masterECDHPrivateKeyJWK,
-      { name: 'ECDH', namedCurve: 'P-256' },
+      { name: 'ECDH', namedCurve: 'P-521' },
       true,
       ['deriveKey']
     );
 
-    if (!importedPrivateKey) throw new Error('Failed to import the remote master private key.');
+    if (!importedBaseKey) throw new Error('Failed to import the remote master private key.');
 
-    const masterWrappingKey = await crypto.subtle.deriveKey(
+    const masterKeyWrappingKey = await crypto.subtle.deriveKey(
       { name: 'ECDH', public: importedPublicKey },
-      importedPrivateKey,
+      importedBaseKey,
       { name: 'AES-GCM', length: 256 },
       true,
       ['wrapKey', 'unwrapKey']
     );
 
-    if (!masterWrappingKey) throw new Error('Failed to create the master key wrapping key.');
-    const keyMaterial = await crypto.subtle.exportKey('jwk', masterWrappingKey);
+    if (!masterKeyWrappingKey) throw new Error('Failed to create the master key wrapping key.');
+    
+    const masterKeyWrappingKeyJWK = await crypto.subtle.exportKey('jwk', masterKeyWrappingKey);
 
-    return keyMaterial;
+    return masterKeyWrappingKeyJWK;
   } catch (err) {
     console.error(err.stack);
     writeToDebug(err.stack);
@@ -156,7 +157,7 @@ async function generateMasterKeyWrappingKey({ localECDHPublicKeyJWK, masterECDHP
  * 
  * @param {JsonWebKey} masterKeyJWK - The master key as JsonWebKey
  * @param {Uint8Array} wrappedMasterKeyIV - The initialization vector as a Uint8Array
- * @param {JsonWebKey} masterKeyWrappingKey  - The master wrapping key as a JsonWebKey
+ * @param {JsonWebKey} masterKeyWrappingKeyJWK  - The master wrapping key as a JsonWebKey
  * @returns {Promise<ArrayBuffer>} - A promise that resolves to the wrapped master key as an ArrayBuffer.
  */
 async function wrapMasterKey({ masterKeyJWK, wrappedMasterKeyIV, masterKeyWrappingKeyJWK }) {
@@ -191,7 +192,6 @@ async function wrapMasterKey({ masterKeyJWK, wrappedMasterKeyIV, masterKeyWrappi
     );
 
     if (!wrappedMasterKey) throw new Error('Failed to create the wrapped master key');
-
     return wrappedMasterKey;
   } catch (err) {
     console.error(err.stack);
@@ -231,16 +231,14 @@ async function unwrapLocalECDHPrivateKey({ wrappedLocalECDHPrivateKeyJWK, wrappe
       },
       { // unwrappedKeyAlgo
         name: 'ECDH',
-        namedCurve: 'P-256'
+        namedCurve: 'P-521'
       },
       true,
       ['deriveKey']
     );
 
     if (!localECDHPrivateKey) throw new Error('Failed to import the local ECDH private key.');
-
     const keyMaterial = await crypto.subtle.exportKey('jwk', localECDHPrivateKey);
-
     return keyMaterial;
   } catch (err) {
     console.error(err.stack);
@@ -252,54 +250,43 @@ async function unwrapLocalECDHPrivateKey({ wrappedLocalECDHPrivateKeyJWK, wrappe
  *
  * @param {JsonWebKey} masterECDHPublicKeyJWK - The master remote ECDH public key as aJsonWebKey
  * @param {JsonWebKey} localECDHPrivateKeyJWK - The local ECDH private key as a JsonWebKey
- * @returns {Promise<JsonWebKey>} - A promise that resolves to the master wrapping key as a JsonWebKey
+ * @returns {Promise<JsonWebKey>} - A promise that resolves to the master key wrapping key as a JsonWebKey
  */
 async function deriveMasterKeyWrappingKey({ masterECDHPublicKeyJWK, localECDHPrivateKeyJWK }) {
   try {
     if (!masterECDHPublicKeyJWK || !localECDHPrivateKeyJWK) throw new Error('Input objects for deriveMasterWrappingKey are undefined or missing.');
-
-    // // Ensure that the 'kty' field is set to 'EC' for both keys
-    // if (!masterECDHPublicKeyJWK.kty) masterECDHPublicKeyJWK.kty = 'EC';
-    // if (!localECDHPrivateKeyJWK.kty) localECDHPrivateKeyJWK.kty = 'EC';
-    
-    // // Ensure that the 'crv' field is set to 'P-256' for both keys
-    // if (!masterECDHPublicKeyJWK.crv) masterECDHPublicKeyJWK.crv = 'P-256';
-    // if (!localECDHPrivateKeyJWK.crv) localECDHPrivateKeyJWK.crv = 'P-256';
-    
+   
     const importedPublicKey = await crypto.subtle.importKey(
       'jwk',
       masterECDHPublicKeyJWK,
-      { name: 'ECDH', namedCurve: 'P-256' },
+      { name: 'ECDH', namedCurve: 'P-521' },
       true,
       []
     );
 
-
     if (!importedPublicKey) throw new Error('Failed to create the imported public key.');
 
-    const importedPrivateKey = await crypto.subtle.importKey(
+    const importedBaseKey = await crypto.subtle.importKey(
       'jwk',
       localECDHPrivateKeyJWK,
-      { name: 'ECDH', namedCurve: 'P-256' },
+      { name: 'ECDH', namedCurve: 'P-521' },
       true,
       ['deriveKey']
     );
 
-    if (!importedPrivateKey) throw new Error('Failed to create the imported private key.');
+    if (!importedBaseKey) throw new Error('Failed to create the imported private key.');
 
-    const masterWrappingKey = await crypto.subtle.deriveKey(
+    const masterKeyWrappingKey = await crypto.subtle.deriveKey(
       { name: 'ECDH', public: importedPublicKey },
-      importedPrivateKey,
+      importedBaseKey,
       { name: 'AES-GCM', length: 256 },
       true,
       ['wrapKey', 'unwrapKey']
     );
 
-    if (!masterWrappingKey) throw new Error('Failed to create the master wrapping key.');
-
-    const masterWrappingKeyJWK = await crypto.subtle.exportKey('jwk', masterWrappingKey);
-
-    return masterWrappingKeyJWK;
+    if (!masterKeyWrappingKey) throw new Error('Failed to create the master wrapping key.');
+    const masterKeyWrappingKeyJWK = await crypto.subtle.exportKey('jwk', masterKeyWrappingKey);
+    return masterKeyWrappingKeyJWK;
   } catch (err) {
     console.error(err.stack);
   }
@@ -345,9 +332,7 @@ async function unwrapMasterKey({ wrappedMasterKeyJWK, wrappedMasterKeyIV, master
     );
 
     if (!masterKey) throw new Error('Failed to import the master key.');
-
     const masterKeyJWK = await crypto.subtle.exportKey('jwk', masterKey);
-
     return masterKeyJWK;
   } catch (err) {
     console.error(err.stack);
@@ -384,7 +369,6 @@ async function encrypt({ cleartext, iv, masterKeyJWK }) {
 
     if (!ciphertextArrayBuffer) throw new Error('Failed to encrypt the cleartext');
     const ciphertext = new Uint8Array(ciphertextArrayBuffer);
-
     return ciphertext;
   } catch (err) {
     console.error(err.stack);
@@ -421,7 +405,6 @@ async function decrypt({ ciphertext, iv, masterKeyJWK }) {
 
     if (!cleartextBuffer) throw new Error('Failed to decrypt the ciphertext.');
     const cleartext = textDecoder.decode(new Uint8Array(cleartextBuffer));
-
     return cleartext;
   } catch (err) {
     console.error(err.stack);
@@ -431,29 +414,36 @@ async function decrypt({ ciphertext, iv, masterKeyJWK }) {
 /**
  * Derive the master key to encrypt/decrypt a payload
  *
- * @param {any[]} prfHandles - array containing all of the saved PRF handles
  * @param {JsonWebKey} masterECDHPublicKeyJWK - The master ECDH public key
- * 
+ * @param {any[]} prfHandles - array containing all of the saved PRF handles
+ *  
  * @returns {Promise<JsonWebKey>} - A promise that resolves to the master key as a JsonWebKey
  */
-async function deriveMasterKey({ prfHandles, masterECDHPublicKeyJWK }) {
+async function deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles }) {
   try {
-    if (!prfHandles || !prfHandles.length || !masterECDHPublicKeyJWK) throw new Error('Input elements for deriveMasterKey are undefined or missing');
+    if (!masterECDHPublicKeyJWK || !prfHandles || !prfHandles.length) throw new Error('Input elements for deriveMasterKey are undefined or missing');
 
     if (
       typeof masterECDHPublicKeyJWK !== 'object' ||
       masterECDHPublicKeyJWK.kty !== 'EC' ||
-      masterECDHPublicKeyJWK.crv !== "P-256" ||
-      masterECDHPublicKeyJWK.x?.length !== 43 ||
-      masterECDHPublicKeyJWK.y?.length !== 43
+      masterECDHPublicKeyJWK.crv !== "P-521" ||
+      masterECDHPublicKeyJWK.x?.length !== 88 ||
+      masterECDHPublicKeyJWK.y?.length !== 88 ||
+      masterECDHPublicKeyJWK.key_ops?.length !== 0
     ) {
-      throw new Error('Failed to retrieve a valid master ECDH public key JWK');
+      throw new Error('Failed to retrieve a valid master ECDH public key EC P-521 JWK');
     }
 
     const { credentialID, prfOutput } = await getWebAuthnResults({ prfHandles });
     if (!credentialID || !prfOutput) throw new Error('Received missing or undefined results from the WebAuthn extension');
-    const prfHandle = prfHandles.find(h => bufferToBase64URLString(h.credentialID) === bufferToBase64URLString(credentialID));
-    if (!prfHandle) throw new Error('Could not retrieve the associated PRF handle');
+
+    const prfHandleIndex = encryptedEnvelope.prfHandles.findIndex(h => bufferToBase64URLString(h.credentialID) === bufferToBase64URLString(credentialID));
+
+    if (prfHandleIndex === -1) {
+      throw new Error('Could not retrieve the associated PRF handle');
+    }
+
+    const prfHandle = prfHandles[prfHandleIndex];
 
     const { 
       hkdfSalt,
@@ -473,16 +463,11 @@ async function deriveMasterKey({ prfHandles, masterECDHPublicKeyJWK }) {
       typeof localECDHPrivateKeyWrappingKeyJWK !== 'object' ||
       localECDHPrivateKeyWrappingKeyJWK.alg !== 'A256GCM' ||
       localECDHPrivateKeyWrappingKeyJWK.k?.length !== 43 ||
-      localECDHPrivateKeyWrappingKeyJWK.kty !== 'oct'
-    ) {
-      throw new Error('Failed to derive a valid local ECDH private key wrapping key JWK');
-    }
-
-    if (
+      localECDHPrivateKeyWrappingKeyJWK.kty !== 'oct' ||
       !localECDHPrivateKeyWrappingKeyJWK.key_ops.includes("wrapKey") ||
       !localECDHPrivateKeyWrappingKeyJWK.key_ops.includes("unwrapKey")
     ) {
-      throw new Error('The local ECDH private key wrapping key does not have the correct key usages (wrapKey and unwrapKey)');
+      throw new Error('Failed to derive a valid local ECDH private key wrapping key AES256GCM JWK');
     }
 
     const localECDHPrivateKeyJWK = await unwrapLocalECDHPrivateKey({ 
@@ -495,18 +480,13 @@ async function deriveMasterKey({ prfHandles, masterECDHPublicKeyJWK }) {
       !localECDHPrivateKeyJWK ||
       typeof localECDHPrivateKeyJWK !== 'object' ||
       localECDHPrivateKeyJWK.kty !== 'EC' ||
-      localECDHPrivateKeyJWK.crv !== "P-256" ||
-      localECDHPrivateKeyJWK.x?.length !== 43 ||
-      localECDHPrivateKeyJWK.y?.length !== 43 ||
-      localECDHPrivateKeyJWK.d?.length !== 43
-    ) {
-      throw new Error('Failed to unwrap a valid local ECDH private key JWK');
-    }
-
-    if (
+      localECDHPrivateKeyJWK.crv !== "P-521" ||
+      localECDHPrivateKeyJWK.x?.length !== 88 ||
+      localECDHPrivateKeyJWK.y?.length !== 88 ||
+      localECDHPrivateKeyJWK.d?.length !== 88 ||
       !localECDHPrivateKeyJWK.key_ops.includes("deriveKey")
     ) {
-      throw new Error('The local ECDH private key does not have the correct key usages (deriveKey)');
+      throw new Error('Failed to unwrap a valid local ECDH private key EC P-521 JWK');
     }
 
     const masterKeyWrappingKeyJWK = await deriveMasterKeyWrappingKey({ 
@@ -519,16 +499,11 @@ async function deriveMasterKey({ prfHandles, masterECDHPublicKeyJWK }) {
       typeof masterKeyWrappingKeyJWK !== 'object' ||
       masterKeyWrappingKeyJWK.alg !== 'A256GCM' ||
       masterKeyWrappingKeyJWK.k?.length !== 43 ||
-      masterKeyWrappingKeyJWK.kty !== 'oct'
-    ) {
-      throw new Error('Failed to derive a valid master key wrapping key JWK');
-    }
-
-    if (
+      masterKeyWrappingKeyJWK.kty !== 'oct' ||
       !masterKeyWrappingKeyJWK.key_ops.includes("wrapKey") ||
       !masterKeyWrappingKeyJWK.key_ops.includes("unwrapKey")
     ) {
-      throw new Error('The master key wrapping key does not have the correct key usages (wrapKey and unwrapKey)');
+      throw new Error('Failed to derive a valid master key wrapping key AES256GCM JWK');
     }
 
     const masterKeyJWK = await unwrapMasterKey({ 
@@ -544,7 +519,7 @@ async function deriveMasterKey({ prfHandles, masterECDHPublicKeyJWK }) {
       masterKeyJWK.k?.length !== 43 ||
       masterKeyJWK.kty !== 'oct'
     ) {
-      throw new Error('The master key is not a valid JWK');
+      throw new Error('The master key is not a valid AES256GCM JWK');
     }
 
     if (
@@ -584,7 +559,7 @@ async function generateMasterKey() {
       masterKeyJWK.k?.length !== 43 ||
       masterKeyJWK.kty !== 'oct'
     ) {
-      throw new Error('The master key is not a valid JWK');
+      throw new Error('The master key is not a valid AES256GCM JWK');
     }
 
     if (
@@ -608,7 +583,7 @@ async function generateMasterKey() {
  */
 async function generateMasterECDHKeyPairJWKs() {
   try {
-    const algorithm = { name: 'ECDH', namedCurve: 'P-256' };
+    const algorithm = { name: 'ECDH', namedCurve: 'P-521' };
     const keyPair = await crypto.subtle.generateKey(algorithm, true, ['deriveKey']);
     const masterECDHPublicKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
     const masterECDHPrivateKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
@@ -617,25 +592,25 @@ async function generateMasterECDHKeyPairJWKs() {
       typeof masterECDHPublicKeyJWK !== 'object' ||
       typeof masterECDHPublicKeyJWK !== 'object' ||
       masterECDHPublicKeyJWK.kty !== 'EC' ||
-      masterECDHPublicKeyJWK.crv !== "P-256" ||
-      masterECDHPublicKeyJWK.x?.length !== 43 ||
-      masterECDHPublicKeyJWK.y?.length !== 43 ||
+      masterECDHPublicKeyJWK.crv !== "P-521" ||
+      masterECDHPublicKeyJWK.x?.length !== 88 ||
+      masterECDHPublicKeyJWK.y?.length !== 88 ||
       masterECDHPublicKeyJWK.key_ops?.length !== 0
     ) {
-      throw new Error('The master ECDH public key is not a valid JWK');
+      throw new Error('The master ECDH public key is not a valid EC P-521 JWK');
     }
 
     if (
       !masterECDHPrivateKeyJWK ||
       typeof masterECDHPrivateKeyJWK !== 'object' ||
       masterECDHPrivateKeyJWK.kty !== 'EC' ||
-      masterECDHPrivateKeyJWK.crv !== "P-256" ||
-      masterECDHPrivateKeyJWK.x?.length !== 43 ||
-      masterECDHPrivateKeyJWK.y?.length !== 43 ||
-      masterECDHPrivateKeyJWK.d?.length !== 43 || 
+      masterECDHPrivateKeyJWK.crv !== "P-521" ||
+      masterECDHPrivateKeyJWK.x?.length !== 88 ||
+      masterECDHPrivateKeyJWK.y?.length !== 88 ||
+      masterECDHPrivateKeyJWK.d?.length !== 88 || 
       !masterECDHPrivateKeyJWK.key_ops?.includes("deriveKey")
     ) {
-      throw new Error('The master ECDH private key is not a valid JWK');
+      throw new Error('The master ECDH private key is not a valid EC P-521 JWK');
     }
 
     return { masterECDHPublicKeyJWK, masterECDHPrivateKeyJWK };
@@ -643,5 +618,73 @@ async function generateMasterECDHKeyPairJWKs() {
     console.error(err.stack);
     writeToDebug(err.stack);
     writeToOutput(`Error: ${err}`);
+  }
+}
+
+// fallback to the previous master ECDH public key and wrapped master key
+function fallbackToPreviousValues({ encryptedEnvelope, prevMasterECDHPublicKeyJWK, prevWrappedMasterKeyJWKs, prevWrappedMasterKeyIVs }) {
+  try {
+    Object.assign(encryptedEnvelope, { masterECDHPublicKeyJWK: prevMasterECDHPublicKeyJWK });
+
+    for (let i = 0; i < encryptedEnvelope.prfHandles.length; i++) {
+      encryptedEnvelope.prfHandles[i] = {
+        credentialID: encryptedEnvelope.prfHandles[i].credentialID,
+        prfSalt: encryptedEnvelope.prfHandles[i].prfSalt,
+        hkdfSalt: encryptedEnvelope.prfHandles[i].hkdfSalt,
+        localECDHPublicKeyJWK: encryptedEnvelope.prfHandles[i].localECDHPublicKeyJWK,
+        wrappedLocalECDHPrivateKeyJWK: encryptedEnvelope.prfHandles[i].wrappedLocalECDHPrivateKeyJWK,
+        wrappedLocalECDHPrivateKeyIV: encryptedEnvelope.prfHandles[i].wrappedLocalECDHPrivateKeyIV,
+        wrappedMasterKeyJWK: prevWrappedMasterKeyJWKs[i],
+        wrappedMasterKeyIV: prevWrappedMasterKeyIVs[i]
+      };
+    }
+  } catch (err) {
+    console.error(err.stack);
+  }
+}
+
+function rotateMasterKeys({ encryptedEnvelope, currMasterECDHPublicKeyJWK, currWrappedMasterKeyJWKs, currWrappedMasterKeyIVs }) {
+  try {
+    // save the rotated master key data
+    Object.assign(encryptedEnvelope, { masterECDHPublicKeyJWK: currMasterECDHPublicKeyJWK });
+
+    for (let i = 0; i < encryptedEnvelope.prfHandles.length; i++) {
+      encryptedEnvelope.prfHandles[i] = {
+        credentialID: encryptedEnvelope.prfHandles[i].credentialID,
+        prfSalt: encryptedEnvelope.prfHandles[i].prfSalt,
+        hkdfSalt: encryptedEnvelope.prfHandles[i].hkdfSalt,
+        localECDHPublicKeyJWK: encryptedEnvelope.prfHandles[i].localECDHPublicKeyJWK,
+        wrappedLocalECDHPrivateKeyJWK: encryptedEnvelope.prfHandles[i].wrappedLocalECDHPrivateKeyJWK,
+        wrappedLocalECDHPrivateKeyIV: encryptedEnvelope.prfHandles[i].wrappedLocalECDHPrivateKeyIV,
+        wrappedMasterKeyJWK: currWrappedMasterKeyJWKs[i],
+        wrappedMasterKeyIV: currWrappedMasterKeyIVs[i]
+      };
+    }
+    return true;
+  } catch (err) {
+    console.error(err.stack);
+    return false;
+  }
+}
+
+async function verifyEncryptionAndDecryption(masterKeyJWK) {
+  try {
+    // check that data can be encrypted and decrypted with the key
+    const cleartext = "hellothere"; // random string with symbols, emojis etc
+
+    console.log("Encrypting message...");
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await encrypt({ cleartext, iv, masterKeyJWK });
+
+    console.log("Decrypting message...")
+    const decryptedText = await decrypt({ ciphertext, iv, masterKeyJWK });
+    if (!decryptedText) return false;
+
+    if (cleartext === decryptedText) {
+      return true;
+    } else return false
+  } catch (err) {
+    console.error(err.stack);
+    return false;
   }
 }
