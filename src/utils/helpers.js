@@ -163,6 +163,15 @@ async function generateRandomString(length) {
   return randomString;
 }
 
+/**
+ * Helper function to compare two strings including for characters that are not encoded
+ * correctly by the browser
+ * 
+ * @param {string} str1 - the length of the random string to generate
+ * @param {string} str2 - the length of the random string to generate
+ * 
+ * @returns {Promise<boolean>} - a Promise that returns to a boolean representing if the strings are equal [true] or not equal [false]
+ */
 function compareStrings(str1, str2) {
   if (str1.length !== str2.length) {
     return false;

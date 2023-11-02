@@ -152,7 +152,7 @@ async function handleAuthenticateKey() {
     };
 
     const newMasterKeyJWK = await handleRotateMasterKeys();
-    ValidationService.isValidMasterKeyJWK({ masterKeyJWK: newMasterKeyJWK });
+    ValidationService.isValidMasterKeyJWK(newMasterKeyJWK);
 
     const verifyResult = await verifyEncryptionAndDecryption(newMasterKeyJWK);
     const msg = verifyResult
@@ -193,7 +193,7 @@ async function handleEncrypt() {
 
     const { masterECDHPublicKeyJWK, prfHandles } = encryptedEnvelope;
     const masterKeyJWK = await deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles });
-    ValidationService.isValidMasterKeyJWK({ masterKeyJWK });
+    ValidationService.isValidMasterKeyJWK(masterKeyJWK);
 
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ciphertext = await encrypt({ cleartext: elemMessage.value ?? '', iv, masterKeyJWK });
@@ -219,7 +219,7 @@ async function handleEncrypt() {
 }
 
 /**
- * Decrypt a protected message using a prepared security key
+ * Decrypt an encrypted message using a prepared security key
  * 
  */
 async function handleDecrypt() {
@@ -248,7 +248,7 @@ async function handleDecrypt() {
 
     const { iv, ciphertext, masterECDHPublicKeyJWK, prfHandles } = encryptedEnvelope;
     const masterKeyJWK = await deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles });
-    ValidationService.isValidMasterKeyJWK({ masterKeyJWK });
+    ValidationService.isValidMasterKeyJWK(masterKeyJWK);
 
     const decryptedText = await decrypt({ ciphertext, iv, masterKeyJWK });
     if (!decryptedText) throw new Error('Failed to decrypt the message');
@@ -297,11 +297,17 @@ async function handleRotateMasterKeys() {
       if (Object.keys(encryptedEnvelope.masterECDHPublicKeyJWK).length) {
         prevMasterECDHPublicKeyJWK = encryptedEnvelope.masterECDHPublicKeyJWK;
       } else throw new Error("The master ECDH public key is defined but has no data.")
-    }
+    } 
+    
+    // if the key doesn't exist, we assume this is when authenticating a new key
 
     // generate new master keys
     const newMasterKeyJWK = await generateMasterKey();
+    ValidationService.isValidMasterKeyJWK(newMasterKeyJWK);
+
     const { masterECDHPublicKeyJWK, masterECDHPrivateKeyJWK } = await generateMasterECDHKeyPairJWKs();
+    ValidationService.isValidMasterECDHPublicKeyJWK(masterECDHPublicKeyJWK);
+    ValidationService.isValidMasterECDHPrivateKeyJWK(masterECDHPrivateKeyJWK);
 
     // for each PRF handle: derive a master wrapping key from the local ECDH public key and the master ECDH private key, then wrap the master key with it
     for (const h of encryptedEnvelope.prfHandles) {
@@ -335,14 +341,12 @@ async function handleRotateMasterKeys() {
         console.log("Decrypting the vault...");
         // decrypt the vault with the current master keys (Need to use a previously configured authenticator)
         let msg = encryptedEnvelope.prfHandles.length
-          ? "We need to decrypt your vault. Please present a previously configured security key"
+          ? "We need to decrypt your vault. Please present a PREVIOUSLY configured security key"
           : "We need to decrypt your vault using your saved security key";
         alert(msg);
 
-        const { decryptedText, masterKeyJWK } = await handleDecrypt();
+        const { decryptedText, masterKeyJWK: prevMasterKeyJWK } = await handleDecrypt();
         if (!decryptedText) throw new Error("Vault decryption failed.");
-        const prevMasterKeyJWK = masterKeyJWK;
-        ValidationService.isValidMasterKeyJWK({ masterKeyJWK: prevMasterKeyJWK });
 
         // rotate the master keys
         console.log("Vault decryption successful. Rotating master keys...");
@@ -376,7 +380,6 @@ async function handleRotateMasterKeys() {
       if (!result) throw new Error("Master key rotation failed");
       else console.log("Master keys successfully rotated.");
     }
-
     return newMasterKeyJWK;
   } catch (err) {
     console.error(err.stack);

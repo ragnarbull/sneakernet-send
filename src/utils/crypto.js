@@ -350,7 +350,7 @@ async function unwrapMasterKey({ wrappedMasterKeyJWK, wrappedMasterKeyIV, master
 async function encrypt({ cleartext, iv, masterKeyJWK }) {
   try {
     if (!cleartext || !iv || !masterKeyJWK) throw new Error('Input objects for encrypt are undefined or missing.');
-    ValidationService.isValidMasterKeyJWK({ masterKeyJWK });
+    ValidationService.isValidMasterKeyJWK(masterKeyJWK);
 
     const importedMasterKey = await crypto.subtle.importKey(
       'jwk',
@@ -387,7 +387,7 @@ async function encrypt({ cleartext, iv, masterKeyJWK }) {
 async function decrypt({ ciphertext, iv, masterKeyJWK }) {
   try {
     if (!ciphertext|| !iv || !masterKeyJWK) throw new Error('Input objects for decrypt are undefined or missing.');
-    ValidationService.isValidMasterKeyJWK({ masterKeyJWK });
+    ValidationService.isValidMasterKeyJWK(masterKeyJWK);
 
     const importedMasterKey = await crypto.subtle.importKey(
       'jwk',
@@ -465,7 +465,7 @@ async function deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles }) {
       wrappedMasterKeyIV,
       masterKeyWrappingKeyJWK 
     });
-    ValidationService.isValidMasterKeyJWK({ masterKeyJWK });
+    ValidationService.isValidMasterKeyJWK(masterKeyJWK);
 
     return masterKeyJWK;
   } catch (err) {
@@ -489,7 +489,7 @@ async function generateMasterKey() {
       ['encrypt', 'decrypt']
     );
     const masterKeyJWK = await crypto.subtle.exportKey('jwk', masterKey);
-    ValidationService.isValidMasterKeyJWK({ masterKeyJWK });
+    ValidationService.isValidMasterKeyJWK(masterKeyJWK);
 
     return masterKeyJWK;
   } catch (err) {
