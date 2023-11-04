@@ -13,7 +13,7 @@ async function registerWebAuthnAuthenticator({ userID, userName, prfSalt }) {
     const regCredential = await navigator.credentials.create({
       publicKey: {
         challenge: getRandomBytes(),
-        rp: { name: 'One Key To Rule Them All' },
+        rp: { name: "PetMindz" },
         user: {
           id: userID,
           name: userName,
@@ -26,7 +26,7 @@ async function registerWebAuthnAuthenticator({ userID, userName, prfSalt }) {
         authenticatorSelection: {
           userVerification: 'required',
           residentKey: 'required', // ie. a "passkey" which is saved on the authenticator
-          authenticatorAttachment: 'cross-platform',
+          authenticatorAttachment: 'cross-platform', // currently no platform authenticators (eg. Windows Hello or Apple iCloud Keychain support the PRF extension)
         },
         extensions: {
           prf: { eval: { first: prfSalt } },
@@ -41,8 +41,8 @@ async function registerWebAuthnAuthenticator({ userID, userName, prfSalt }) {
       writeToDebug(message);
       alert(message);
       throw Error(message);
-    }
-    console.log("PRF extension IS compatible with this authenticator/client combo");
+    } else console.log("PRF extension is supported.") // PRF extension is compatible with the authenticator-client combo
+
 
     const credentialID = base64URLStringToBuffer(regCredential.id);
     if (!credentialID || credentialID === undefined) {

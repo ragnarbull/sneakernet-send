@@ -51,7 +51,7 @@ const userProperties = (function () {
 })();
 
 // on page load (ie. wipes the encryptedEnvelope);
-const encryptedEnvelope = {};
+const encryptedEnvelope = {}; // this object will be saved to the server
 userProperties.createUserProperties();
 console.log("encryptedEnvelope:", encryptedEnvelope);
 
@@ -71,50 +71,32 @@ document.addEventListener('keyup', handleDocumentKeyUp);
  */
 async function handleRegisterKey() {
   try {
-    if (!encryptedEnvelope || Object.keys(encryptedEnvelope).length === 0) {
-      throw new Error('The encrypted envelope has not been properly configured');
+    if (!encryptedEnvelope) {
+      throw new Error("Then encrypted envelope does not exist.");
+    } else if (Object.keys(encryptedEnvelope).length === 0) {
+      throw new Error("The encrypted envelope has not been properly configured.");
     }
 
     const { userID, userName } = userProperties.getUserProperties();
-    const prfSalt = crypto.getRandomValues(new Uint8Array(new Array(32)));
+    const prfSalt = crypto.getRandomValues(new Uint8Array(new Array(32))); // use the same PRF salt for the authentication
     const credentialID = await registerWebAuthnAuthenticator({ userID, userName, prfSalt });
     if (!credentialID) throw new Error('The authenticator was not registered');
 
-    if (!encryptedEnvelope.prfHandles) Object.assign(encryptedEnvelope, { prfHandles: [] });
+    if (!encryptedEnvelope.prfHandles) {
+      Object.assign(encryptedEnvelope, { prfHandles: [] })
+    }
     encryptedEnvelope.prfHandles.push({ credentialID, prfSalt });
 
-    const msg = "The security key was successfully registered! Press enter to continue setting up the encryption keys.";
-    writeToDebug(msg);
-    alert(msg);
-    handleCloseFirstTime();
-
-    await handleAuthenticateKey();
-  } catch (err) {
-    console.error(err.stack);
-    writeToDebug(err.stack);
-    writeToOutput(`Error: ${err}`);
-  }
-}
-
-/**
- *  For each authenticator (that supports the PRF / MHAC-secret extension and has been enrolled)
- *
- */
-async function handleAuthenticateKey() {
-  try {
-    if (!encryptedEnvelope || Object.keys(encryptedEnvelope).length === 0) {
-      throw new Error('The encrypted envelope has not been properly configured');
+    if (Object.keys(encryptedEnvelope.prfHandles).length === 0) {
+      throw new Error("Security key registration failed. The WebAuthn device data was not saved correctly.");
     }
 
-    if (!encryptedEnvelope.prfHandles) {
-      throw new Error('There are no saved PRF handles');
-    } else if (Object.keys(encryptedEnvelope.prfHandles).length === 0) {
-      throw new Error('The PRF handle(s) do(es) not contain any data');
-    }
+    // security key registration is successful (and checked that the PRF extension is available)
+    // now need to get the PRF extension output to derive a series of keys to securely wrap a master AES256GCM key
+    // TODO: separate these when a login system is built
 
-    const prfHandles = encryptedEnvelope.prfHandles;
-    const { credentialID, prfOutput } = await getWebAuthnResults({ prfHandles });
-    if (!credentialID || !prfOutput) throw new Error('Received missing or undefined results from the WebAuthn extension');
+    const { prfOutput } = await getWebAuthnResults({ prfHandles: encryptedEnvelope.prfHandles });
+    if (!prfOutput) throw new Error("Failed to register the security key. The PRF extension output is invalid.");
 
     // generate a local ECDH key pair
     const { localECDHPublicKeyJWK, localECDHPrivateKeyJWK } = await generateLocalECDHKeyPairJWKs();
@@ -139,9 +121,6 @@ async function handleAuthenticateKey() {
     ValidationService.isValidWrappedLocalECDHPrivateKeyJWK(wrappedLocalECDHPrivateKeyJWK);
 
     const prfHandleIndex = await findPrfHandleIndex({encryptedEnvelope, credentialID});
-    const prfSalt = encryptedEnvelope.prfHandles[prfHandleIndex]?.prfSalt;
-    if (!prfSalt) throw new Error('Could not retrieve the PRF salt');
-
     encryptedEnvelope.prfHandles[prfHandleIndex] = {
       credentialID,
       prfSalt,
@@ -151,17 +130,147 @@ async function handleAuthenticateKey() {
       wrappedLocalECDHPrivateKeyIV,
     };
 
-    const newMasterKeyJWK = await handleRotateMasterKeys();
+    // only filled if there is one or more fully-configured existing authenticators
+    let prevMasterECDHPublicKeyJWK;
+    const prevWrappedMasterKeyIVs = [];
+    const prevWrappedMasterKeyJWKs = [];
+
+    const newWrappedMasterKeyIVs = [];
+    const newWrappedMasterKeyJWKs = [];
+
+    // retrieve the existing master ECDH public key (if it exists) to use for fallback if needed
+    if (encryptedEnvelope.masterECDHPublicKeyJWK) { 
+      if (Object.keys(encryptedEnvelope.masterECDHPublicKeyJWK).length) {
+        prevMasterECDHPublicKeyJWK = encryptedEnvelope.masterECDHPublicKeyJWK;
+      } else throw new Error("Failed to authenticate the security key. The master ECDH public key is defined but has no data.")
+    } 
+    
+    // generate new master keys
+    const newMasterKeyJWK = await generateMasterKey();
     ValidationService.isValidMasterKeyJWK(newMasterKeyJWK);
-
     const verifyResult = await verifyEncryptionAndDecryption(newMasterKeyJWK);
-    const msg = verifyResult
-      ? "Your security key can now be used to encrypt & decrypt messages with this site."
-      : "Failed to configure the security key. Please try again.";
+    if (!verifyResult) throw new Error("Failed to authenticate the security key. The new master key was not correcly generated.");
 
-    writeToDebug(msg);
-    alert(msg);
+    let newMasterECDHPublicKeyJWK;
+    let newMasterECDHPrivateKeyJWK;
+    const { masterECDHPublicKeyJWK, masterECDHPrivateKeyJWK } = await generateMasterECDHKeyPairJWKs();
+    newMasterECDHPublicKeyJWK = masterECDHPublicKeyJWK;
+    newMasterECDHPrivateKeyJWK = masterECDHPrivateKeyJWK;
+    ValidationService.isValidMasterECDHPublicKeyJWK(newMasterECDHPublicKeyJWK);
+    ValidationService.isValidMasterECDHPrivateKeyJWK(newMasterECDHPrivateKeyJWK);
+
+    // for each PRF handle: derive a master wrapping key from the local ECDH public key and the master ECDH private key, then wrap the master key with it
+    for (const h of encryptedEnvelope.prfHandles) {
+      // retrieve the existing wrapped master key (if it exists) to use for fallback if needed
+      if (h.wrappedMasterKeyJWK && h.wrappedMasterKeyIV) {
+        prevWrappedMasterKeyJWKs.push(h.wrappedMasterKeyJWK);
+        prevWrappedMasterKeyIVs.push(h.wrappedMasterKeyIV);
+      }
+
+      const newMasterKeyWrappingKeyJWK = await generateMasterKeyWrappingKey({ 
+        localECDHPublicKeyJWK: h.localECDHPublicKeyJWK, 
+        masterECDHPrivateKeyJWK: newMasterECDHPrivateKeyJWK
+      });
+      ValidationService.isValidMasterKeyWrappingKeyJWK(newMasterKeyWrappingKeyJWK);
+
+      // wrap the master key
+      const newWrappedMasterKeyIV = crypto.getRandomValues(new Uint8Array(new Array(12)));
+      const newWrappedMasterKeyJWK = await wrapMasterKey({ 
+        masterKeyJWK: newMasterKeyJWK,
+        wrappedMasterKeyIV: newWrappedMasterKeyIV,
+        masterKeyWrappingKeyJWK: newMasterKeyWrappingKeyJWK
+      });
+      ValidationService.isValidWrappedMasterKey(newWrappedMasterKeyJWK);
+
+      newWrappedMasterKeyIVs.push(newWrappedMasterKeyIV);
+      newWrappedMasterKeyJWKs.push(newWrappedMasterKeyJWK);
+    }
+
+    if (encryptedEnvelope.ciphertext && encryptedEnvelope.iv) {
+      if (Object.keys(encryptedEnvelope.ciphertext).length && Object.keys(encryptedEnvelope.iv).length) {
+        // existing encrypted data so we need to decrypt it with an existing master key first
+        console.log("Decrypting the vault...");
+        // decrypt the vault with the previous master keys
+        if (encryptedEnvelope.prfHandles.length) {
+          alert("We need to decrypt your vault. Please present a PREVIOUSLY configured security key.")
+        }
+
+        const { decryptedCiphertextBuffer, masterKeyJWK: prevMasterKeyJWK } = await handleDecrypt();
+        if (!decryptedCiphertextBuffer || !prevMasterKeyJWK) {
+          throw new Error("Failed to authenticate the security key. Vault decryption failed.")
+        };
+
+        // rotate the master keys
+        const result = rotateMasterKeys({ 
+          encryptedEnvelope, 
+          newMasterECDHPublicKeyJWK, 
+          newWrappedMasterKeyJWKs, 
+          newWrappedMasterKeyIVs 
+        });
+        if (!result) {
+          console.log("Master key rotation was not successful. Falling back to the previous values and re-encrypting the vault.");
+          fallbackToPreviousValues({ 
+            encryptedEnvelope, 
+            prevMasterECDHPublicKeyJWK, 
+            prevWrappedMasterKeyJWKs, 
+            prevWrappedMasterKeyIVs 
+          });
+          // re-encrypt the vault with the previous master keys
+          const ciphertext = await encrypt({ 
+            encodedCleartextBuffer: decryptedCiphertextBuffer, 
+            iv: encryptedEnvelope.iv, 
+            masterKeyJWK: prevMasterKeyJWK
+          });
+          if (!ciphertext) throw new Error("Failed to authenticate the security key. Failed to re-encrypt the vault.");
+        } else {
+          console.log("Master keys rotated. Encrypting the vault with the new master key...");
+          // re-encrypt the vault with the new master keys
+          const newIV = crypto.getRandomValues(new Uint8Array(12));
+          const ciphertextSuccess = await encrypt({ 
+            encodedCleartextBuffer: decryptedCiphertextBuffer, 
+            iv: newIV,
+            masterKeyJWK: newMasterKeyJWK
+          });
+
+          if (!ciphertextSuccess) {
+            console.log("Failed to re-encrypt the vault with the new master keys. Falling back to the previous master keys...");
+            fallbackToPreviousValues({ 
+              encryptedEnvelope, 
+              prevMasterECDHPublicKeyJWK, 
+              prevWrappedMasterKeyJWKs, 
+              prevWrappedMasterKeyIVs 
+            });
+            // re-encrypt the vault with the previous master keys
+            const ciphertextFallback = await encrypt({ 
+              encodedCleartextBuffer: decryptedCiphertextBuffer, 
+              iv: encryptedEnvelope.iv, 
+              masterKeyJWK: prevMasterKeyJWK 
+            });
+
+            if (!ciphertextFallback) {
+              throw new Error("Failed to authenticate the security key. Attempted to fallback to the previous master keys but failed to re-encrypt the vault.");
+            }
+            throw new Error("Failed to authenticate the security key. Failed to re-encrypt the vault with the new master keys. Your vault is locked with the previous master keys.");
+          } else {
+            Object.assign(encryptedEnvelope, { iv: newIV, ciphertext: ciphertextSuccess });
+          }
+        }
+      }
+    } else {
+      const result = rotateMasterKeys({ 
+        encryptedEnvelope, 
+        newMasterECDHPublicKeyJWK, 
+        newWrappedMasterKeyJWKs, 
+        newWrappedMasterKeyIVs 
+      });
+      if (!result) throw new Error("Failed to register the security key.");
+    }
+
+    const successMsg = "You can now use the security key to encrypt & decrypt messages on this site."
+    writeToDebug(successMsg);
+    alert(successMsg);
     handleCloseFirstTime();
+    
   } catch (err) {
     console.error(err.stack);
     writeToDebug(err.stack);
@@ -195,8 +304,16 @@ async function handleEncrypt() {
     const masterKeyJWK = await deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles });
     ValidationService.isValidMasterKeyJWK(masterKeyJWK);
 
+    const cleartext = elemMessage.value ?? '';
+    if (!cleartext) {
+      alert("Please provide a message to encrypt");
+      return;
+    }
+    const encodedCleartextBuffer = new TextEncoder().encode(cleartext);
+
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ciphertext = await encrypt({ cleartext: elemMessage.value ?? '', iv, masterKeyJWK });
+    const ciphertext = await encrypt({ encodedCleartextBuffer, iv, masterKeyJWK });
+
     if (!ciphertext) throw new Error('Failed to encrypt the message');
     Object.assign(encryptedEnvelope, { iv, ciphertext });
 
@@ -250,16 +367,19 @@ async function handleDecrypt() {
     const masterKeyJWK = await deriveMasterKey({ masterECDHPublicKeyJWK, prfHandles });
     ValidationService.isValidMasterKeyJWK(masterKeyJWK);
 
-    const decryptedText = await decrypt({ ciphertext, iv, masterKeyJWK });
-    if (!decryptedText) throw new Error('Failed to decrypt the message');
+    const decryptedCiphertextBuffer = await decrypt({ ciphertext, iv, masterKeyJWK });
+    if (!decryptedCiphertextBuffer) throw new Error('Failed to decrypt the message');
+
+    const decryptedCiphertext = new TextDecoder('utf-8').decode(decryptedCiphertextBuffer);
+    if (!decryptedCiphertext) throw new Error('Failed to decrypt the message');
 
     console.log("Messaged decrypted...");
-    console.log("Decrypted message:", decryptedText);
+    console.log("Decrypted message:", decryptedCiphertext);
 
-    writeToDebug(`Original Message: ${decryptedText}`);
-    writeToOutput(decryptedText);
+    writeToDebug(`Original Message: ${decryptedCiphertext}`);
+    writeToOutput(decryptedCiphertext);
 
-    return { decryptedText, masterKeyJWK };
+    return { decryptedCiphertextBuffer, masterKeyJWK };
   } catch (err) {
     console.error(err.stack);
     writeToDebug(err.stack);
@@ -289,8 +409,8 @@ async function handleRotateMasterKeys() {
     const prevWrappedMasterKeyJWKs = [];
     const prevWrappedMasterKeyIVs = [];
 
-    const currWrappedMasterKeyJWKs = [];
-    const currWrappedMasterKeyIVs = [];
+    const newWrappedMasterKeyIVs = [];
+    const newWrappedMasterKeyJWKs = [];
 
     // retrieve the existing master ECDH public key (if it exists) to use for fallback if needed
     if (encryptedEnvelope.masterECDHPublicKeyJWK) { 
@@ -299,15 +419,19 @@ async function handleRotateMasterKeys() {
       } else throw new Error("The master ECDH public key is defined but has no data.")
     } 
     
-    // if the key doesn't exist, we assume this is when authenticating a new key
-
     // generate new master keys
     const newMasterKeyJWK = await generateMasterKey();
     ValidationService.isValidMasterKeyJWK(newMasterKeyJWK);
+    const verifyResult = await verifyEncryptionAndDecryption(newMasterKeyJWK);
+    if (!verifyResult) throw new Error("Failed to authenticate the security key. The new master key was not correcly generated.")
 
+    let newMasterECDHPublicKeyJWK;
+    let newMasterECDHPrivateKeyJWK;
     const { masterECDHPublicKeyJWK, masterECDHPrivateKeyJWK } = await generateMasterECDHKeyPairJWKs();
-    ValidationService.isValidMasterECDHPublicKeyJWK(masterECDHPublicKeyJWK);
-    ValidationService.isValidMasterECDHPrivateKeyJWK(masterECDHPrivateKeyJWK);
+    newMasterECDHPublicKeyJWK = masterECDHPublicKeyJWK;
+    newMasterECDHPrivateKeyJWK = masterECDHPrivateKeyJWK;
+    ValidationService.isValidMasterECDHPublicKeyJWK(newMasterECDHPublicKeyJWK);
+    ValidationService.isValidMasterECDHPrivateKeyJWK(newMasterECDHPrivateKeyJWK);
 
     // for each PRF handle: derive a master wrapping key from the local ECDH public key and the master ECDH private key, then wrap the master key with it
     for (const h of encryptedEnvelope.prfHandles) {
@@ -317,70 +441,106 @@ async function handleRotateMasterKeys() {
         prevWrappedMasterKeyIVs.push(h.wrappedMasterKeyIV);
       }
 
-      const masterKeyWrappingKeyJWK = await generateMasterKeyWrappingKey({ 
+      const newMasterKeyWrappingKeyJWK = await generateMasterKeyWrappingKey({ 
         localECDHPublicKeyJWK: h.localECDHPublicKeyJWK, 
-        masterECDHPrivateKeyJWK 
+        masterECDHPrivateKeyJWK: newMasterECDHPrivateKeyJWK
       });
-      ValidationService.isValidMasterKeyWrappingKeyJWK(masterKeyWrappingKeyJWK);
+      ValidationService.isValidMasterKeyWrappingKeyJWK(newMasterKeyWrappingKeyJWK);
 
       // wrap the master key
-      const wrappedMasterKeyIV = crypto.getRandomValues(new Uint8Array(new Array(12)));
-      const wrappedMasterKeyJWK = await wrapMasterKey({ 
+      const newWrappedMasterKeyIV = crypto.getRandomValues(new Uint8Array(new Array(12)));
+      const newWrappedMasterKeyJWK = await wrapMasterKey({ 
         masterKeyJWK: newMasterKeyJWK,
-        wrappedMasterKeyIV,
-        masterKeyWrappingKeyJWK
+        wrappedMasterKeyIV: newWrappedMasterKeyIV,
+        masterKeyWrappingKeyJWK: newMasterKeyWrappingKeyJWK
       });
-      ValidationService.isValidWrappedMasterKey(wrappedMasterKeyJWK);
+      ValidationService.isValidWrappedMasterKey(newWrappedMasterKeyJWK);
 
-      currWrappedMasterKeyJWKs.push(wrappedMasterKeyJWK);
-      currWrappedMasterKeyIVs.push(wrappedMasterKeyIV);
+      newWrappedMasterKeyIVs.push(newWrappedMasterKeyIV);
+      newWrappedMasterKeyJWKs.push(newWrappedMasterKeyJWK);
     }
 
     if (encryptedEnvelope.ciphertext && encryptedEnvelope.iv) {
       if (Object.keys(encryptedEnvelope.ciphertext).length && Object.keys(encryptedEnvelope.iv).length) {
         console.log("Decrypting the vault...");
-        // decrypt the vault with the current master keys (Need to use a previously configured authenticator)
-        let msg = encryptedEnvelope.prfHandles.length
-          ? "We need to decrypt your vault. Please present a PREVIOUSLY configured security key"
-          : "We need to decrypt your vault using your saved security key";
-        alert(msg);
+        // decrypt the vault with the previous master keys
+        if (encryptedEnvelope.prfHandles.length) {
+          alert("We need to decrypt your vault. Please present one of your registered security keys.")
+        }
 
-        const { decryptedText, masterKeyJWK: prevMasterKeyJWK } = await handleDecrypt();
-        if (!decryptedText) throw new Error("Vault decryption failed.");
+        const { decryptedCiphertextBuffer, masterKeyJWK: prevMasterKeyJWK } = await handleDecrypt();
+        if (!decryptedCiphertextBuffer || !prevMasterKeyJWK) {
+          throw new Error("Failed to authenticate the security key. Vault decryption failed.")
+        };
 
         // rotate the master keys
-        console.log("Vault decryption successful. Rotating master keys...");
-        const result = rotateMasterKeys({ encryptedEnvelope, currMasterECDHPublicKeyJWK: masterECDHPublicKeyJWK, currWrappedMasterKeyJWKs, currWrappedMasterKeyIVs });
+        const result = rotateMasterKeys({ 
+          encryptedEnvelope, 
+          newMasterECDHPublicKeyJWK, 
+          newWrappedMasterKeyJWKs, 
+          newWrappedMasterKeyIVs 
+        });
         if (!result) {
           console.log("Master key rotation was not successful. Falling back to the previous values and re-encrypting the vault.");
-          fallbackToPreviousValues({ encryptedEnvelope, prevMasterECDHPublicKeyJWK, prevWrappedMasterKeyJWKs, prevWrappedMasterKeyIVs });
+          fallbackToPreviousValues({ 
+            encryptedEnvelope, 
+            prevMasterECDHPublicKeyJWK, 
+            prevWrappedMasterKeyJWKs, 
+            prevWrappedMasterKeyIVs 
+          });
           // re-encrypt the vault with the previous master keys
-          const ciphertext = await encrypt({ cleartext: decryptedText, iv: encryptedEnvelope.iv, masterKeyJWK: prevMasterKeyJWK });
-          if (!ciphertext) throw new Error("Failed to re-encrypt the vault.");
+          const ciphertext = await encrypt({ 
+            encodedCleartextBuffer: decryptedCiphertextBuffer, 
+            iv: encryptedEnvelope.iv, 
+            masterKeyJWK: prevMasterKeyJWK
+          });
+          if (!ciphertext) throw new Error("Failed to authenticate the security key. Failed to re-encrypt the vault.");
         } else {
           console.log("Master keys rotated. Encrypting the vault with the new master key...");
           // re-encrypt the vault with the new master keys
           const newIV = crypto.getRandomValues(new Uint8Array(12));
-          const ciphertextSuccess = await encrypt({ cleartext: decryptedText, iv: newIV, masterKeyJWK: newMasterKeyJWK });
-
+          const ciphertextSuccess = await encrypt({ 
+            encodedCleartextBuffer: decryptedCiphertextBuffer, 
+            iv: newIV,
+            masterKeyJWK: newMasterKeyJWK
+          });
           if (!ciphertextSuccess) {
             console.log("Failed to re-encrypt the vault with the new master keys. Falling back to the previous master keys...");
-            fallbackToPreviousValues({ encryptedEnvelope, prevMasterECDHPublicKeyJWK, prevWrappedMasterKeyJWKs, prevWrappedMasterKeyIVs });
+            fallbackToPreviousValues({ 
+              encryptedEnvelope, 
+              prevMasterECDHPublicKeyJWK, 
+              prevWrappedMasterKeyJWKs, 
+              prevWrappedMasterKeyIVs 
+            });
             // re-encrypt the vault with the previous master keys
-            const ciphertextFallback = await encrypt({ cleartext: decryptedText, iv: encryptedEnvelope.iv, masterKeyJWK: prevMasterKeyJWK });
-            if (!ciphertextFallback) throw new Error("Failed to re-encrypt the vault. Yeah oops we can't encrypt your data :(");
+            const ciphertextFallback = await encrypt({ 
+            encodedCleartextBuffer: decryptedCiphertextBuffer, 
+              iv: encryptedEnvelope.iv, 
+              masterKeyJWK: prevMasterKeyJWK 
+            });
+            if (!ciphertextFallback) {
+              throw new Error("Failed to authenticate the security key. Attempted to fallback to the previous master keys but failed to re-encrypt the vault.");
+            }
+            throw new Error("Failed to authenticate the security key. Failed to re-encrypt the vault with the new master keys. Your vault is locked with the previous master keys.");
           } else {
             Object.assign(encryptedEnvelope, { iv: newIV, ciphertext: ciphertextSuccess });
-            console.log("Master keys successfully rotated and vault encrypted with the new master keys.");
           }
         }
-      } else throw new Error("Ciphertext and IV are defined but have no data.");
+      }
     } else {
-      const result = rotateMasterKeys({ encryptedEnvelope, currMasterECDHPublicKeyJWK: masterECDHPublicKeyJWK, currWrappedMasterKeyJWKs, currWrappedMasterKeyIVs });
-      if (!result) throw new Error("Master key rotation failed");
-      else console.log("Master keys successfully rotated.");
+      const result = rotateMasterKeys({ 
+        encryptedEnvelope, 
+        newMasterECDHPublicKeyJWK, 
+        newWrappedMasterKeyJWKs, 
+        newWrappedMasterKeyIVs 
+      });
+      if (!result) throw new Error("Failed to authenticate the security key.");
     }
-    return newMasterKeyJWK;
+
+    const msg = "You can now use the security key to encrypt & decrypt messages on this site."
+    writeToDebug(msg);
+    alert(msg);
+
   } catch (err) {
     console.error(err.stack);
     writeToDebug(err.stack);

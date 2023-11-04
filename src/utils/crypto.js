@@ -1,6 +1,3 @@
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder('utf-8');
-
 /**
  * Generate the local ECDH key pair
  *
@@ -39,7 +36,7 @@ async function derivelocalECDHPrivateKeyWrappingKey({ prfOutput, hkdfSalt }) {
     if (!keyDerivationKey) throw new Error('Failed to import the key derivation key for the local ECDH private key wrapping key.');
 
     const localECDHPrivateKeyWrappingKey = await crypto.subtle.deriveKey(
-      { name: 'HKDF', info: textEncoder.encode('localECDHPrivateKeyWrappingKey'), salt: hkdfSalt, hash: 'SHA-256' },
+      { name: 'HKDF', info: new TextEncoder().encode('localECDHPrivateKeyWrappingKey'), salt: hkdfSalt, hash: 'SHA-256' },
       keyDerivationKey,
       { name: 'AES-GCM', length: 256 },
       true,
@@ -342,14 +339,14 @@ async function unwrapMasterKey({ wrappedMasterKeyJWK, wrappedMasterKeyIV, master
 /**
  * Encrypt a payload with a symmetric encryption key
  *
- * @param {string} cleartext - The data to be encrypted
+ * @param {Uint8Array} encodedCleartextBuffer - The data to be encrypted as a Uint8Array
  * @param {Uint8Array} iv - The initialization vector as a Uint8Array
  * @param {JsonWebKey} masterKeyJWK - The encryption key as a JsonWebKey
- * @returns {Promise<Uint8Array>} - A promise that resolves to the ciphertext as an ArrayBuffer
+ * @returns {Promise<Uint8Array>} - A promise that resolves to the ciphertext as a Uint8Array
  */
-async function encrypt({ cleartext, iv, masterKeyJWK }) {
+async function encrypt({ encodedCleartextBuffer, iv, masterKeyJWK }) {
   try {
-    if (!cleartext || !iv || !masterKeyJWK) throw new Error('Input objects for encrypt are undefined or missing.');
+    if (!encodedCleartextBuffer || !iv || !masterKeyJWK) throw new Error('Input objects for encrypt are undefined or missing.');
     ValidationService.isValidMasterKeyJWK(masterKeyJWK);
 
     const importedMasterKey = await crypto.subtle.importKey(
@@ -362,15 +359,13 @@ async function encrypt({ cleartext, iv, masterKeyJWK }) {
 
     if (!importedMasterKey) throw new Error('Failed to import the master key.');
 
-    const ciphertextArrayBuffer = await crypto.subtle.encrypt(
+    const ciphertextBuffer = await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv },
       importedMasterKey,
-      textEncoder.encode(cleartext),
+      encodedCleartextBuffer,
     );
 
-    if (!ciphertextArrayBuffer) throw new Error('Failed to encrypt the cleartext');
-    const ciphertext = new Uint8Array(ciphertextArrayBuffer);
-    return ciphertext;
+    return new Uint8Array(ciphertextBuffer);
   } catch (err) {
     console.error(err.stack);
   }
@@ -382,7 +377,7 @@ async function encrypt({ cleartext, iv, masterKeyJWK }) {
  * @param {Uint8Array} ciphertext - The data to be decrypted as an Uint8Array
  * @param {Uint8Array} iv - The initialization vector as a Uint8Array
  * @param {JsonWebKey} masterKeyJWK - The encryption key as a JsonWebKey
- * @returns {Promise<string>} - A promise that resolves to the cleartext as a string
+ * @returns {Promise<Uint8Array>} - A promise that resolves to the decrypted ciphertext as a Uint8Array
  */
 async function decrypt({ ciphertext, iv, masterKeyJWK }) {
   try {
@@ -399,15 +394,13 @@ async function decrypt({ ciphertext, iv, masterKeyJWK }) {
 
     if (!importedMasterKey) throw new Error('Failed to import the master key.');
 
-    const cleartextBuffer = await crypto.subtle.decrypt(
+    const decryptedCiphertextBuffer = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv },
       importedMasterKey,
       ciphertext,
     );
 
-    if (!cleartextBuffer) throw new Error('Failed to decrypt the ciphertext.');
-    const cleartext = textDecoder.decode(new Uint8Array(cleartextBuffer));
-    return cleartext;
+    return new Uint8Array(decryptedCiphertextBuffer);
   } catch (err) {
     console.error(err.stack);
   }
@@ -558,16 +551,16 @@ function fallbackToPreviousValues({ encryptedEnvelope, prevMasterECDHPublicKeyJW
  * Rotate the master keys (AES256GCM and EC P-521)
  * 
  * @param {Object} encryptedEnvelope - the encrypted envelope as an Object
- * @param {JsonWebKey} currMasterECDHPublicKeyJWK - the new master ECDH public key as a JsonWebKey
- * @param {JsonWebKey[]} currWrappedMasterKeyJWKs - the new wrapped master keys for each PRF handle as an array of JsonWebKeys
- * @param {Uint8Array[]} currWrappedMasterKeyIVs -  the new wrapped master key initialization vectors for each PRF handle as an array of Uint8Arrays
+ * @param {JsonWebKey} newMasterECDHPublicKeyJWK - the new master ECDH public key as a JsonWebKey
+ * @param {JsonWebKey[]} newWrappedMasterKeyJWKs - the new wrapped master keys for each PRF handle as an array of JsonWebKeys
+ * @param {Uint8Array[]} newWrappedMasterKeyIVs -  the new wrapped master key initialization vectors for each PRF handle as an array of Uint8Arrays
  * 
  * @returns {Promise<boolean>} - a Promise that returns a boolean reprsenting if the verification was successful [true] or unsuccessful [false]
  */
-function rotateMasterKeys({ encryptedEnvelope, currMasterECDHPublicKeyJWK, currWrappedMasterKeyJWKs, currWrappedMasterKeyIVs }) {
+function rotateMasterKeys({ encryptedEnvelope, newMasterECDHPublicKeyJWK, newWrappedMasterKeyJWKs, newWrappedMasterKeyIVs }) {
   try {
     // save the rotated master key data
-    Object.assign(encryptedEnvelope, { masterECDHPublicKeyJWK: currMasterECDHPublicKeyJWK });
+    Object.assign(encryptedEnvelope, { masterECDHPublicKeyJWK: newMasterECDHPublicKeyJWK });
 
     for (let i = 0; i < encryptedEnvelope.prfHandles.length; i++) {
       encryptedEnvelope.prfHandles[i] = {
@@ -575,10 +568,10 @@ function rotateMasterKeys({ encryptedEnvelope, currMasterECDHPublicKeyJWK, currW
         prfSalt: encryptedEnvelope.prfHandles[i].prfSalt,
         hkdfSalt: encryptedEnvelope.prfHandles[i].hkdfSalt,
         localECDHPublicKeyJWK: encryptedEnvelope.prfHandles[i].localECDHPublicKeyJWK,
-        wrappedLocalECDHPrivateKeyJWK: encryptedEnvelope.prfHandles[i].wrappedLocalECDHPrivateKeyJWK,
         wrappedLocalECDHPrivateKeyIV: encryptedEnvelope.prfHandles[i].wrappedLocalECDHPrivateKeyIV,
-        wrappedMasterKeyJWK: currWrappedMasterKeyJWKs[i],
-        wrappedMasterKeyIV: currWrappedMasterKeyIVs[i]
+        wrappedLocalECDHPrivateKeyJWK: encryptedEnvelope.prfHandles[i].wrappedLocalECDHPrivateKeyJWK,
+        wrappedMasterKeyIV: newWrappedMasterKeyIVs[i],
+        wrappedMasterKeyJWK: newWrappedMasterKeyJWKs[i]
       };
     }
     return true;
@@ -598,28 +591,30 @@ function rotateMasterKeys({ encryptedEnvelope, currMasterECDHPublicKeyJWK, currW
  */
 async function verifyEncryptionAndDecryption(newMasterKeyJWK) {
   try {
-    console.log("Verifying encryption & decryption work as expected...");
+    if (!newMasterKeyJWK) return false;
 
-    if (!newMasterKeyJWK) throw new Error('Input elements for verifyEncryptionAndDecryption are undefined or missing');
-
+    // Generate a random string containing emojis
     const cleartext = await generateRandomString(12);
     if (!cleartext) return false;
+    const encodedCleartextBuffer = new TextEncoder().encode(cleartext);
 
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ciphertext = await encrypt({ cleartext, iv, masterKeyJWK: newMasterKeyJWK });
+    const ciphertext = await encrypt({ encodedCleartextBuffer, iv, masterKeyJWK: newMasterKeyJWK });
     if (!ciphertext) return false;
 
-    const decryptedText = await decrypt({ ciphertext, iv, masterKeyJWK: newMasterKeyJWK });
-    if (!decryptedText) return false;
+    const decryptedCiphertextBuffer = await decrypt({ ciphertext, iv, masterKeyJWK: newMasterKeyJWK });
+    if (!decryptedCiphertextBuffer) return false;
 
-    if (compareStrings(cleartext, decryptedText)) {
-      console.log("All checks passed...")
+    if (compareBuffers(encodedCleartextBuffer, decryptedCiphertextBuffer)) {
+      // console.log("All checks passed...");
       return true;
     } else {
-      console.log("Checks failed...")
-      return false};
+      // console.log("Checks failed...");
+      return false;
+    }
   } catch (err) {
     console.error(err.stack);
     return false;
   }
 }
+

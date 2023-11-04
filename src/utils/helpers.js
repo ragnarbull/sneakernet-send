@@ -164,22 +164,26 @@ async function generateRandomString(length) {
 }
 
 /**
- * Helper function to compare two strings including for characters that are not encoded
- * correctly by the browser
- * 
- * @param {string} str1 - the length of the random string to generate
- * @param {string} str2 - the length of the random string to generate
- * 
- * @returns {Promise<boolean>} - a Promise that returns to a boolean representing if the strings are equal [true] or not equal [false]
+ * Compare two Uint8Array buffers for equality.
+ *
+ * @param {Uint8Array} buffer1 - The first buffer to compare.
+ * @param {Uint8Array} buffer2 - The second buffer to compare.
+ * @returns {boolean} - Returns true if the buffers are equal, false otherwise.
  */
-function compareStrings(str1, str2) {
-  if (str1.length !== str2.length) {
+function compareBuffers(buffer1, buffer2) {
+  if (!(buffer1 instanceof Uint8Array) || !(buffer2 instanceof Uint8Array)) {
+    throw new Error("Both inputs must be Uint8Array objects.");
+  }
+
+  if (buffer1.length !== buffer2.length) {
     return false;
   }
-  for (let i = 0; i < str1.length; i++) {
-    if (str1.charCodeAt(i) !== str2.charCodeAt(i)) {
+
+  for (let i = 0; i < buffer1.length; i++) {
+    if (buffer1[i] !== buffer2[i]) {
       return false;
     }
   }
+
   return true;
 }
